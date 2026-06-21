@@ -1,0 +1,9 @@
+[
+    {
+        "audio_path": "Recording.wav",
+        "reference_text": "Faster Whisper is an optimized implementation of OpenAI Whisper automatic speech recognition model designed to provide significantly faster transcription speeds while maintaining high accuracy built on CTranslate2 inference engine. Faster Whisper leverages efficient computation techniques such as model quantization, GPU acceleration and optimized memory usage to reduce the latency and resource consumption. Compared to the original Whisper implementation, it can transcribe audio several times faster and requires less memory, making it suitable for real-time applications like voice assistance, live captioning, meeting transcription and multilingual speech processing. Additionally, Faster Whisper retains Whisper's strong capabilities in multilingual speech recognition and translation, offering developers a practical and scalable solution for deploying speech-to-text systems in production environments.",
+        "language": "en",
+        "category": "english_clean",
+        "description": "English description of Faster Whisper — clear speech, no noise"
+    }
+]

@@ -13,5 +13,8 @@ sounddevice>=0.4.6           # Cross-platform mic recording
 numpy>=1.24.0                # Audio array handling
 scipy>=1.10.0                # WAV file read/write
 
+# --- Evaluation (Phase 2) ---
+jiwer>=3.0.0                 # Word/Character Error Rate metrics
+
 # --- Utilities ---
 rich>=13.0.0                 # Pretty terminal output
