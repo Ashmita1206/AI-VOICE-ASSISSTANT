@@ -1,0 +1,17 @@
+# ==============================================================
+# AI Voice Assistant — Phase 1 Dependencies
+# ==============================================================
+# Install with:  pip install -r requirements.txt
+# ==============================================================
+
+# --- STT (Speech-to-Text) ---
+faster-whisper>=1.1.0        # CTranslate2-optimized Whisper
+torch>=2.0.0                 # CUDA detection + tensor ops
+
+# --- Audio ---
+sounddevice>=0.4.6           # Cross-platform mic recording
+numpy>=1.24.0                # Audio array handling
+scipy>=1.10.0                # WAV file read/write
+
+# --- Utilities ---
+rich>=13.0.0                 # Pretty terminal output
