@@ -524,19 +524,185 @@ def search_inside_application(args: dict[str, Any]) -> ExecutionResult:
             return ExecutionResult(success=True, tool="search_inside_application", message=f"Searched and opened chat for '{query}' in WhatsApp.")
 
         elif "spotify" in app or "spotify" in window_title:
-            pyautogui.hotkey("ctrl", "l")
-            time.sleep(0.3)
-            pyautogui.hotkey("ctrl", "a")
-            pyautogui.press("backspace")
-            time.sleep(0.2)
-            pyautogui.write(query, interval=0.03)
-            time.sleep(0.8)
-            pyautogui.press("enter")
-            time.sleep(0.5)
-            pyautogui.press("tab")
-            time.sleep(0.2)
-            pyautogui.press("enter")
-            return ExecutionResult(success=True, tool="search_inside_application", message=f"Searched and playing '{query}' in Spotify.")
+            # 1. Locate and focus Spotify window
+            spotify_hwnd = None
+            spotify_pids = set()
+            if psutil:
+                try:
+                    for proc in psutil.process_iter(attrs=['pid', 'name']):
+                        if 'spotify' in (proc.info.get('name') or '').lower():
+                            spotify_pids.add(proc.info['pid'])
+                except Exception:
+                    pass
+            
+            if win32gui and spotify_pids:
+                hwnds = []
+                def enum_win(hwnd, extra):
+                    try:
+                        if win32gui.IsWindowVisible(hwnd):
+                            title = win32gui.GetWindowText(hwnd)
+                            if title:
+                                _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                                if pid in spotify_pids:
+                                    hwnds.append((hwnd, title))
+                    except Exception:
+                        pass
+                    return True
+                try:
+                    import win32api
+                    win32api.SetLastError(0)
+                    win32gui.EnumWindows(enum_win, None)
+                except Exception:
+                    pass
+                if hwnds:
+                    hwnds.sort(key=lambda x: len(x[1]), reverse=True)
+                    spotify_hwnd = hwnds[0][0]
+                    
+            if not spotify_hwnd and win32gui:
+                hwnds = []
+                def enum_win_title(hwnd, extra):
+                    try:
+                        if win32gui.IsWindowVisible(hwnd):
+                            title = win32gui.GetWindowText(hwnd).lower()
+                            if 'spotify' in title:
+                                hwnds.append(hwnd)
+                    except Exception:
+                        pass
+                    return True
+                try:
+                    win32gui.EnumWindows(enum_win_title, None)
+                    if hwnds:
+                        spotify_hwnd = hwnds[0]
+                except Exception:
+                    pass
+
+            # Helper functions
+            def focus_spotify(hwnd):
+                if not hwnd or not win32gui:
+                    return False
+                try:
+                    if win32gui.IsIconic(hwnd):
+                        win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                    else:
+                        win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
+                    win32gui.SetForegroundWindow(hwnd)
+                    return True
+                except Exception:
+                    return False
+
+            def force_focus_spotify(hwnd, pids):
+                if focus_spotify(hwnd):
+                    return True
+                if pids:
+                    from automation.applications import bring_process_to_foreground
+                    for pid in pids:
+                        if bring_process_to_foreground(pid):
+                            return True
+                try:
+                    import win32com.client
+                    shell = win32com.client.Dispatch("WScript.Shell")
+                    if shell.AppActivate("Spotify"):
+                        return True
+                except Exception:
+                    pass
+                return False
+
+            def verify_spotify_playing(pids):
+                if not win32gui:
+                    return True
+                start_poll = time.time()
+                while time.time() - start_poll < 4.0:
+                    titles = []
+                    def enum_win(hwnd, extra):
+                        try:
+                            title = win32gui.GetWindowText(hwnd)
+                            if title:
+                                _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                                if pid in pids:
+                                    titles.append(title)
+                        except Exception:
+                            pass
+                        return True
+                    try:
+                        import win32api
+                        win32api.SetLastError(0)
+                        win32gui.EnumWindows(enum_win, None)
+                    except Exception:
+                        pass
+                    for t in titles:
+                        t_lower = t.lower().strip()
+                        if t_lower and t_lower not in ("spotify", "spotify free", "spotify premium", "spotify partner", "spotify canvas"):
+                            logger.info(f"[SPOTIFY] Playback verified via window title: '{t}'")
+                            return True
+                    time.sleep(0.4)
+                return False
+
+            # Attempt loop: Retry once after refocusing Spotify if playback verification fails
+            max_attempts = 2
+            for attempt in range(1, max_attempts + 1):
+                logger.info(f"[SPOTIFY] In-app interaction attempt {attempt} of {max_attempts}")
+                
+                # Ensure Spotify is focused
+                force_focus_spotify(spotify_hwnd, spotify_pids)
+                time.sleep(0.5)
+
+                # Strategy 1: Quick Search (Ctrl+K)
+                try:
+                    logger.info("[SPOTIFY] Attempting Strategy 1: Quick Search (Ctrl+K)")
+                    pyautogui.hotkey("ctrl", "k")
+                    time.sleep(0.4)
+                    pyautogui.hotkey("ctrl", "a")
+                    time.sleep(0.1)
+                    pyautogui.press("backspace")
+                    time.sleep(0.1)
+                    pyautogui.write(query, interval=0.03)
+                    time.sleep(1.0) # Let suggestions populate
+                    pyautogui.press("enter")
+                    
+                    if verify_spotify_playing(spotify_pids):
+                        return ExecutionResult(
+                            success=True,
+                            tool="search_inside_application",
+                            message=f"Searched and playing '{query}' on Spotify (Quick Search)."
+                        )
+                except Exception as e:
+                    logger.warning(f"[SPOTIFY] Quick search strategy raised exception: {e}")
+
+                # Strategy 2 Fallback: Main Search page (Ctrl+L)
+                try:
+                    logger.info("[SPOTIFY] Attempting Strategy 2: Main Search (Ctrl+L)")
+                    # Clear and focus search bar
+                    pyautogui.hotkey("ctrl", "l")
+                    time.sleep(0.4)
+                    pyautogui.hotkey("ctrl", "a")
+                    time.sleep(0.1)
+                    pyautogui.press("backspace")
+                    time.sleep(0.1)
+                    pyautogui.write(query, interval=0.03)
+                    time.sleep(0.8)
+                    pyautogui.press("enter")
+                    time.sleep(1.2) # Let search results load
+                    
+                    # Navigate to first result
+                    pyautogui.press("tab")
+                    time.sleep(0.2)
+                    pyautogui.press("enter")
+                    
+                    if verify_spotify_playing(spotify_pids):
+                        return ExecutionResult(
+                            success=True,
+                            tool="search_inside_application",
+                            message=f"Searched and playing '{query}' on Spotify (Main Search)."
+                        )
+                except Exception as e:
+                    logger.warning(f"[SPOTIFY] Main search strategy raised exception: {e}")
+
+            # If both attempts failed
+            return ExecutionResult(
+                success=False,
+                tool="search_inside_application",
+                message=f"Failed to play '{query}' on Spotify after {max_attempts} attempts. Playback could not be verified."
+            )
 
         elif "chrome" in app or "edge" in app or "browser" in app:
             pyautogui.hotkey("ctrl", "l")

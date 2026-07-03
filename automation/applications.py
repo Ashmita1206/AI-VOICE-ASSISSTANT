@@ -984,27 +984,19 @@ def perform_app_action(args: dict[str, Any]) -> ExecutionResult:
             song = payload.get("song", "")
             if song:
                 session.set_context(song=song)
-                import win32com.client
                 try:
-                    shell = win32com.client.Dispatch("WScript.Shell")
-                    shell.SendKeys("^l")  # Focus search
-                    time.sleep(0.2)
-                    shell.SendKeys("^a")  # Select all
-                    time.sleep(0.1)
-                    shell.SendKeys(song)
-                    time.sleep(0.5)
-                    shell.SendKeys("~")  # Enter to search
-                    time.sleep(1.0)
-                    shell.SendKeys("{TAB}")  # Highlight top result
-                    time.sleep(0.2)
-                    shell.SendKeys("~")  # Enter to play
-                    return ExecutionResult(
-                        success=True,
-                        tool="perform_app_action",
-                        message=f"Searched and playing '{song}' on Spotify."
-                    )
+                    from automation.desktop import search_inside_application
+                    # Execute the robust search and play sequence
+                    res = search_inside_application({"query": song})
+                    # Adjust tool name for return compatibility
+                    res.tool = "perform_app_action"
+                    return res
                 except Exception as e:
-                    return ExecutionResult(success=False, tool="perform_app_action", message=f"Failed to send keys to Spotify: {e}")
+                    return ExecutionResult(
+                        success=False,
+                        tool="perform_app_action",
+                        message=f"Failed to delegate playback to search_inside_application: {e}"
+                    )
             else:
                 import ctypes
                 try:
