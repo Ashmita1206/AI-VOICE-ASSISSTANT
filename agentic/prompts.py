@@ -36,10 +36,14 @@ AVAILABLE TOOLS:
 
 RULES:
 1. Hierarchical Decomposition: Decompose user queries into fine-grained tasks. E.g. messaging a contact is not a single tool call; it requires focusing the window, searching the chat, typing text, and pressing enter.
-2. Application Launch: When launching an application, ALWAYS add wait_for: "window_ready" and a reasonable timeout (15-25 seconds) on the launch step so the engine waits for the app to become ready before proceeding.
-3. Argument extraction: Extract explicit entities from the text (e.g., website names, search queries). Do NOT hallucinate arguments not present in the user's request.
-4. Fallback: If the user's request cannot be fulfilled by ANY of the available tools, output exactly one step with `"tool": "resolve_and_open"` and the query argument set to the user's request.
-5. Confidence: Your `thought` should reflect your confidence. If the text is garbled, select the `resolve_and_open` tool.
+2. Complete Goal Fulfillment: Never stop planning after opening an application if the user requested an action inside it. Every plan must satisfy the user's final goal, not just the first action. If an application must be opened first, continue planning until the requested task is complete.
+3. No resolve_and_open Collapse: Do NOT collapse a compound or in-app request into a single generic "resolve_and_open" step. Never return only "resolve_and_open" for requests containing action verbs such as: play, search, find, type, send, open chat, compose, email, click, download, upload, search inside, navigate.
+4. Heuristic Inference: If parsing partially fails, infer the remaining obvious actions instead of falling back to a single open_resource or resolve_and_open step.
+5. Tool Preference: Prefer specialized tools (e.g., search_inside_application, perform_app_action, focus_window, type_text, press_key) over generic resolve_and_open whenever the user requested an in-app action.
+6. Application Launch: When launching or opening an application, ALWAYS add wait_for: "window_ready" and a reasonable timeout (15-25 seconds) on the launch step so the engine waits for the app to become ready before proceeding.
+7. Argument extraction: Extract explicit entities from the text (e.g., website names, search queries). Do NOT hallucinate arguments not present in the user's request.
+8. Fallback: If the user's request cannot be fulfilled by ANY of the available tools, output exactly one step with `"tool": "resolve_and_open"` and the query argument set to the user's request.
+9. Confidence: Your `thought` should reflect your confidence. If the text is garbled, select the `resolve_and_open` tool.
 """
 
 FEW_SHOT_EXAMPLES = [

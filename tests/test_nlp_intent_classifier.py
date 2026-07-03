@@ -47,6 +47,18 @@ def run_tests():
     res = classifier.classify("battery kitni hai")
     assert_eq(res.intent, "unknown", "Unknown intent classification")
 
+    # 5. Play music intent
+    res = classifier.classify("play Believer on Spotify")
+    assert_eq(res.intent, "play_music", "Spotify play_music intent classification")
+    assert_eq(res.entities.get("application"), "spotify", "Spotify app entity extracted")
+    assert_eq(res.entities.get("query"), "believer", "Song query entity extracted")
+
+    # 6. Send message intent
+    res = classifier.classify("message Rahul saying how are you")
+    assert_eq(res.intent, "send_message", "WhatsApp send_message intent classification")
+    assert_eq(res.entities.get("contact"), "rahul", "Contact entity extracted")
+    assert_eq(res.entities.get("message"), "how are you", "Message entity extracted")
+
     print(f"\n>>> Results: {passed}/{tests} passed.")
     if passed != tests:
         sys.exit(1)
