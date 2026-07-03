@@ -1,52 +1,442 @@
 """
-Execution Engine
-================
+Stateful Execution Engine
+=========================
 
-Reads ActionSteps from an ExecutionPlan, runs them through the safety layer,
-dispatches them to the registered handler, and returns a list of ExecutionResults.
+Reads ``ActionStep`` objects from an ``ExecutionPlan``, runs them through the
+safety layer, dispatches them to the registered handler, and returns a list of
+``ExecutionResult`` dicts.
+
+Key difference from the previous implementation
+------------------------------------------------
+Every step now follows a full lifecycle::
+
+    PENDING → EXECUTING → WAITING → VERIFYING → SUCCESS
+
+On verification failure::
+
+    VERIFYING → RECOVERY → RETRY → VERIFYING → SUCCESS | FAILURE
+
+*Recovery* is capped at ``step.max_retries`` attempts (default: 2) to avoid
+infinite loops.  All waiting is done via configurable condition-polling from
+:mod:`execution.wait_utils` — no bare ``time.sleep()`` in the main execution
+path.
+
+Backward compatibility
+----------------------
+* ``SystemExecutor`` alias is preserved.
+* ``ExecutionResult.to_dict()`` output is a strict superset of the previous
+  format: three new fields (``state``, ``attempts``, ``recovery_used``) are
+  added, all with sensible defaults.
+* Plans produced by the old planner (without ``wait_for`` / ``timeout``) still
+  work because those fields default to ``None``.
 """
 
+from __future__ import annotations
+
 import logging
-import shlex
+import os
+import sys
 from typing import Any, Callable, Optional
 
 from agentic.schemas import ExecutionPlan, ActionStep
-from execution.schemas import ExecutionResult
+from execution.schemas import ExecutionResult, ExecutionTimer
 from execution.registry import get_handler, load_all_tools
+from execution.step_state import StepStatus, StepRecord, ExecutionContext
+from execution.wait_utils import dispatch_wait, WaitResult
+from execution.verifier import dispatch_verify, VerifyResult
+from execution.recovery import recover_step, RecoveryResult
 
 logger = logging.getLogger(__name__)
 
-# Load handlers
+# Load all tool handlers so their @register_tool decorators fire at import time
 load_all_tools()
 
 from agentic.permissions import PermissionManager
 
-class DesktopExecutor:
-    """Executes a parsed ExecutionPlan against the local system with advanced permissions."""
 
-    def __init__(self):
-        # We can store pending steps here if a confirmation is needed
+# ---------------------------------------------------------------------------
+# Stateful Executor
+# ---------------------------------------------------------------------------
+
+class DesktopExecutor:
+    """Executes a parsed ExecutionPlan against the local system.
+
+    Uses a state-aware step lifecycle (PENDING → EXECUTING → WAITING →
+    VERIFYING → SUCCESS | FAILURE) with configurable wait primitives and a
+    structured recovery engine.
+
+    Attributes
+    ----------
+    pending_steps:
+        Steps awaiting user confirmation (populated when a confirmation gate
+        fires and execution is paused).
+    """
+
+    def __init__(self) -> None:
+        # Populated when a safety-gate confirmation is triggered
         self.pending_steps: list[ActionStep] = []
 
-    def execute(self, plan: ExecutionPlan, progress_callback: Optional[Callable[[str], None]] = None) -> list[dict[str, Any]]:
-        """Run all steps sequentially. Stop and ask if confirmation needed."""
-        results = []
-        import time
-        import os
-        
-        # Safely move cursor and disable fail-safe to prevent triggers in headless environments
+    # ── Public API ──────────────────────────────────────────────────────────
+
+    def execute(
+        self,
+        plan: ExecutionPlan,
+        progress_callback: Optional[Callable[[str], None]] = None,
+    ) -> list[dict[str, Any]]:
+        """Execute all steps in *plan* sequentially with stateful lifecycle management.
+
+        Parameters
+        ----------
+        plan:
+            An :class:`~agentic.schemas.ExecutionPlan` produced by the planner.
+        progress_callback:
+            Optional callable that receives human-readable progress strings for
+            real-time UI streaming (e.g. to the web socket).
+
+        Returns
+        -------
+        list[dict]
+            One dictionary per step, each being the result of
+            :meth:`~execution.schemas.ExecutionResult.to_dict` augmented with
+            ``state``, ``attempts``, and ``recovery_used`` fields.
+        """
+        self._prepare_cursor()
+
+        ctx = ExecutionContext.from_plan(plan)
+
+        def _emit(msg: str) -> None:
+            if progress_callback:
+                progress_callback(msg)
+
+        results: list[dict[str, Any]] = []
+
+        for record in ctx.records:
+            ctx.current_index = record.step_index
+            step = plan.steps[record.step_index]
+
+            # ── Log prerequisite label for UX ───────────────────────────
+            if record.requires:
+                _emit(f"⏳ Requires: {record.requires}")
+                logger.debug(f"[EXECUTOR] Step {record.step_index}: requires '{record.requires}'")
+
+            _emit(f"▶ Running: {step.tool}")
+
+            # ── Run the full step lifecycle ─────────────────────────────
+            result = self._run_step_lifecycle(record, step, ctx, _emit)
+
+            # ── Handle confirmation gate ────────────────────────────────
+            if result.requires_confirmation:
+                _emit(f"🔒 Confirmation required: {result.message}")
+                remaining_steps = plan.steps[record.step_index:]
+                remaining_plan_dict = {
+                    "intent": getattr(plan, "intent", "open_resource"),
+                    "steps": [{"tool": s.tool, "args": s.args} for s in remaining_steps],
+                }
+                from agentic.memory.pending_action import PendingActionManager
+                confirmation_id = PendingActionManager.save(remaining_plan_dict)
+                result.confirmation_id = confirmation_id
+
+                from agentic.memory.session_state import get_session
+                session = get_session()
+                if session.pending_action:
+                    session.pending_action["id"] = confirmation_id
+
+                results.append(result.to_dict())
+                break  # pause execution; resume after user confirms
+
+            # ── Emit outcome message ────────────────────────────────────
+            if record.status == StepStatus.SUCCESS:
+                _emit(f"✓ {step.tool} completed")
+            elif record.status == StepStatus.FAILURE:
+                _emit(f"✗ {step.tool} failed: {record.error_message}")
+
+            results.append(result.to_dict())
+
+            # ── Halt remaining steps on failure ─────────────────────────
+            if record.status == StepStatus.FAILURE:
+                logger.warning(
+                    f"[EXECUTOR] Plan halted at step {record.step_index} ({step.tool}): "
+                    f"{record.error_message}"
+                )
+                break
+
+        return results
+
+    def execute_step(
+        self,
+        step: ActionStep,
+        progress_callback: Optional[Callable[[str], None]] = None,
+    ) -> ExecutionResult:
+        """Execute a single step outside of the full plan lifecycle.
+
+        This method is preserved for backward compatibility with callers that
+        run individual steps (e.g. the confirmation-resume flow, tests).  It
+        does **not** go through the WAITING / VERIFYING phases.
+
+        Parameters
+        ----------
+        step:
+            The :class:`~agentic.schemas.ActionStep` to execute.
+        progress_callback:
+            Optional progress callback.
+
+        Returns
+        -------
+        ExecutionResult
+        """
+        print(f"[EXECUTOR] Received tool: {step.tool}")
+
+        def _cb(msg: str) -> None:
+            if progress_callback:
+                progress_callback(msg)
+
+        handler = get_handler(step.tool)
+        tool_found = handler is not None
+        print(f"[EXECUTOR] Tool found: {tool_found}")
+        print(f"[EXECUTOR] Arguments: {step.args}")
+        _cb(f"Dispatching {step.tool}")
+
+        # 1. Permission check
+        if PermissionManager.requires_confirmation(step.tool, step.args):
+            logger.warning(f"Confirmation required for tool {step.tool}")
+            message = PermissionManager.build_confirmation_message(step.tool, step.args)
+            _cb(f"Confirmation required for {step.tool}")
+
+            from agentic.memory.session_state import get_session
+            confirmation_id = get_session().set_pending_action(step.tool, step.args, message)
+
+            print("[EXECUTOR] Result: requires_confirmation")
+            return ExecutionResult(
+                success=False,
+                tool=step.tool,
+                message=message,
+                requires_confirmation=True,
+                confirmation_id=confirmation_id,
+                state="pending_confirmation",
+            )
+
+        # 2. Registry lookup
+        if not tool_found:
+            print("[EXECUTOR] Result: failure")
+            return ExecutionResult(
+                success=False,
+                tool=step.tool,
+                message=f"Tool '{step.tool}' is not supported or unregistered.",
+                state="failure",
+            )
+
+        # 3. Execute
+        try:
+            with ExecutionTimer() as timer:
+                result = handler(step.args)
+            if not result.tool:
+                result.tool = step.tool
+            result.execution_time_ms = timer.elapsed_ms
+            result_str = "success" if result.success else "failure"
+            print(f"[EXECUTOR] Result: {result_str}")
+            if result.message:
+                _cb(result.message)
+            return result
+        except Exception as exc:
+            logger.exception(f"Unhandled exception in handler for {step.tool}")
+            print("[EXECUTOR] Result: failure")
+            _cb(f"Handler error: {exc}")
+            return ExecutionResult(
+                success=False,
+                tool=step.tool,
+                message=f"Internal handler error: {exc}",
+                state="failure",
+            )
+
+    # ── Private lifecycle helpers ───────────────────────────────────────────
+
+    def _run_step_lifecycle(
+        self,
+        record: StepRecord,
+        step: ActionStep,
+        ctx: ExecutionContext,
+        emit: Callable[[str], None],
+    ) -> ExecutionResult:
+        """Drive a single step through its full lifecycle.
+
+        Covers: EXECUTING → WAITING → VERIFYING → SUCCESS | (RECOVERY → RETRY) × N → FAILURE
+
+        Parameters
+        ----------
+        record:
+            The mutable :class:`~execution.step_state.StepRecord` for this step.
+        step:
+            The immutable :class:`~agentic.schemas.ActionStep` definition.
+        ctx:
+            The plan-level :class:`~execution.step_state.ExecutionContext`.
+        emit:
+            Progress callback wrapper.
+
+        Returns
+        -------
+        ExecutionResult
+            The final result (with lifecycle fields populated).
+        """
+        # ── Phase 1: EXECUTING ──────────────────────────────────────────
+        record.mark_executing()
+        emit(f"  → Executing {step.tool}…")
+        result = self.execute_step(step, progress_callback=emit)
+        record.result = result
+
+        # Bubble up confirmation requests immediately
+        if result.requires_confirmation:
+            return result
+
+        # ── Phase 2: WAITING ────────────────────────────────────────────
+        if record.wait_for and result.success:
+            record.mark_waiting()
+            emit(f"  ⏳ Waiting: {record.wait_for} (timeout={record.timeout or 'default'}s)…")
+            wait_result: WaitResult = dispatch_wait(
+                record.wait_for, step.args, record.timeout
+            )
+            record.metadata["wait_result"] = {
+                "success": wait_result.success,
+                "elapsed_ms": wait_result.elapsed_ms,
+                "message": wait_result.message,
+            }
+            if not wait_result.success:
+                emit(f"  ⚠ Wait failed: {wait_result.message}")
+                logger.warning(f"[EXECUTOR] Wait failed for step {record.step_index}: {wait_result.message}")
+                # Treat wait failure the same as execution failure → recovery
+                result = ExecutionResult(
+                    success=False,
+                    tool=step.tool,
+                    message=f"Wait failed: {wait_result.message}",
+                    state="waiting_failed",
+                )
+                record.result = result
+            else:
+                emit(f"  ✓ Wait satisfied ({wait_result.elapsed_ms} ms)")
+
+        # ── Phase 3: VERIFYING + optional RECOVERY loop ─────────────────
+        return self._verify_and_recover(record, step, ctx, emit, result)
+
+    def _verify_and_recover(
+        self,
+        record: StepRecord,
+        step: ActionStep,
+        ctx: ExecutionContext,
+        emit: Callable[[str], None],
+        result: ExecutionResult,
+    ) -> ExecutionResult:
+        """Verify the step outcome; attempt recovery and retry on failure.
+
+        Parameters
+        ----------
+        record, step, ctx, emit:
+            Passed through from :meth:`_run_step_lifecycle`.
+        result:
+            The result from the execution (or the failing wait result).
+
+        Returns
+        -------
+        ExecutionResult
+            Final result after verification (and any recovery attempts).
+        """
+        while True:
+            # ── VERIFYING ───────────────────────────────────────────────
+            record.mark_verifying()
+            verify_result: VerifyResult = dispatch_verify(step.tool, step.args, result)
+            record.metadata["verify_result"] = {
+                "passed": verify_result.passed,
+                "message": verify_result.message,
+            }
+
+            if verify_result.passed:
+                # SUCCESS path
+                result.state = StepStatus.SUCCESS.value
+                result.attempts = record.attempts
+                record.mark_success(result)
+                emit(f"  ✓ Verified: {verify_result.message}")
+                return result
+
+            # Verification failed
+            emit(f"  ✗ Verification failed: {verify_result.message}")
+            logger.info(
+                f"[EXECUTOR] Step {record.step_index} verification failed "
+                f"(attempt {record.attempts}): {verify_result.message}"
+            )
+
+            # Check if we can still retry
+            if not record.can_retry:
+                msg = (
+                    f"Step '{step.tool}' failed after {record.attempts} attempt(s). "
+                    f"Verification: {verify_result.message}"
+                )
+                record.mark_failure(msg)
+                result.success = False
+                result.state = StepStatus.FAILURE.value
+                result.attempts = record.attempts
+                result.message = msg
+                emit(f"  ✗ Max retries reached. Giving up.")
+                return result
+
+            # ── RECOVERY ────────────────────────────────────────────────
+            record.mark_recovery()
+            emit(f"  🔧 Attempting recovery (attempt {record.attempts}/{record.max_retries})…")
+            recovery_result: RecoveryResult = recover_step(record, ctx)
+            record.metadata.setdefault("recovery_attempts", []).append({
+                "strategy": recovery_result.strategy_used,
+                "succeeded": recovery_result.succeeded,
+                "message": recovery_result.message,
+            })
+
+            if not recovery_result.succeeded:
+                emit(f"  ✗ Recovery failed: {recovery_result.message}")
+                # Don't give up yet if we still have retry budget from a different strategy
+                # — fall through to increment attempts and try the full execute again
+
+            else:
+                emit(f"  ✓ Recovery: {recovery_result.strategy_used}")
+
+            # ── RETRY ────────────────────────────────────────────────────
+            record.mark_retry()
+            emit(f"  ↺ Retrying {step.tool} (attempt {record.attempts})…")
+            result = self.execute_step(step, progress_callback=emit)
+            record.result = result
+            result.recovery_used = True
+
+            # Run wait phase again for the retry if wait_for is set
+            if record.wait_for and result.success:
+                record.mark_waiting()
+                emit(f"  ⏳ Re-waiting: {record.wait_for}…")
+                wait_result = dispatch_wait(record.wait_for, step.args, record.timeout)
+                if not wait_result.success:
+                    emit(f"  ⚠ Wait failed on retry: {wait_result.message}")
+                    result = ExecutionResult(
+                        success=False,
+                        tool=step.tool,
+                        message=f"Wait failed on retry: {wait_result.message}",
+                        state="waiting_failed",
+                        recovery_used=True,
+                    )
+                    record.result = result
+
+            # Loop back to VERIFYING for the retry result
+
+    # ── Cursor / environment preparation ───────────────────────────────────
+
+    @staticmethod
+    def _prepare_cursor() -> None:
+        """Move the mouse cursor to a safe position and disable pyautogui fail-safe.
+
+        Prevents the (0, 0) corner fail-safe from triggering when the executor
+        runs in headless or remote-desktop environments.
+        """
         try:
             import pyautogui
-            if pyautogui:
-                pyautogui.FAILSAFE = False
+            pyautogui.FAILSAFE = False
         except Exception:
             pass
-            
+
         try:
-            import sys
             if sys.platform.startswith("win"):
                 import ctypes
-                # Move to safe middle screen coordinate (500, 500) natively
                 ctypes.windll.user32.SetCursorPos(500, 500)
             else:
                 import pyautogui
@@ -57,183 +447,10 @@ class DesktopExecutor:
         except Exception:
             pass
 
-        def _emit(msg: str) -> None:
-            if progress_callback:
-                progress_callback(msg)
 
-        for i, step in enumerate(plan.steps):
-            _emit(f"Running tool: {step.tool}")
-            res = self.execute_step(step, progress_callback=progress_callback)
-            
-            # If a step required confirmation, save the remaining plan steps to PendingActionManager
-            if res.requires_confirmation:
-                _emit(f"Requires confirmation: {res.message}")
-                remaining_steps = plan.steps[i:]
-                remaining_plan_dict = {
-                    "intent": getattr(plan, "intent", "open_resource") if hasattr(plan, "intent") else "open_resource",
-                    "steps": [{"tool": s.tool, "args": s.args} for s in remaining_steps]
-                }
-                
-                from agentic.memory.pending_action import PendingActionManager
-                confirmation_id = PendingActionManager.save(remaining_plan_dict)
-                
-                # Update execution result confirmation ID
-                res.confirmation_id = confirmation_id
-                
-                # Synchronise session state pending action ID
-                from agentic.memory.session_state import get_session
-                session = get_session()
-                if session.pending_action:
-                    session.pending_action["id"] = confirmation_id
-                
-                results.append(res.to_dict())
-                break
-                
-            # If a step failed, attempt automated recovery/replanning
-            if not res.success:
-                _emit(f"Step '{step.tool}' failed — attempting recovery...")
-                print(f"[RECOVERY] Step '{step.tool}' failed. Attempting recovery replan...")
-                try:
-                    # 1. Take a screenshot (with safe try-except)
-                    import pyautogui
-                    os.makedirs("data", exist_ok=True)
-                    screenshot_path = os.path.join("data", f"recovery_{int(time.time())}.png")
-                    try:
-                        pyautogui.screenshot(screenshot_path)
-                        _emit("Recovery screenshot captured")
-                        print(f"[RECOVERY] Screenshot captured at: {screenshot_path}")
-                    except Exception as scr_err:
-                        print(f"[RECOVERY] Screenshot skipped: {scr_err}")
+# ---------------------------------------------------------------------------
+# Backward-compatibility alias
+# ---------------------------------------------------------------------------
 
-                    # 2. Inspect active UI and active window
-                    from automation.desktop import get_active_app_name, focus_window
-                    active_app = get_active_app_name()
-                    _emit(f"Active foreground app: {active_app}")
-                    print(f"[RECOVERY] Active foreground app: '{active_app}'")
-
-                    # 3. Focus target application or launch if focus failed
-                    target_app = None
-                    if step.tool == "search_inside_application":
-                        from agentic.memory.session_state import get_session
-                        target_app = get_session().last_application or "WhatsApp"
-                    elif "app" in step.args:
-                        target_app = step.args["app"]
-                    elif "application" in step.args:
-                        target_app = step.args["application"]
-                    elif "target" in step.args:
-                        target_app = step.args["target"]
-
-                    if step.tool == "focus_window" and not res.success:
-                        _emit(f"Focus failed — attempting to launch '{target_app}'...")
-                        print(f"[RECOVERY] Focus failed. Attempting to launch application '{target_app}'...")
-                        from automation.applications import launch_application
-                        launch_res = launch_application({"application": target_app})
-                        if launch_res.success:
-                            time.sleep(2.0)
-                            res = launch_res
-                            _emit(f"Application '{target_app}' launched successfully")
-                            print(f"[RECOVERY] Application launched successfully. Resuming plan.")
-                        else:
-                            _emit(f"Launch failed: {launch_res.message}")
-                            print(f"[RECOVERY] Launch failed: {launch_res.message}")
-                    elif target_app and active_app != target_app.lower():
-                        _emit(f"Refocusing window: {target_app}")
-                        print(f"[RECOVERY] Refocusing window: '{target_app}'")
-                        focus_res = focus_window({"target": target_app})
-                        if focus_res.success:
-                            time.sleep(1.0)
-                            _emit(f"Retrying '{step.tool}'...")
-                            print(f"[RECOVERY] Retrying execution of '{step.tool}'...")
-                            retry_res = self.execute_step(step, progress_callback=progress_callback)
-                            if retry_res.success:
-                                _emit(f"Retry succeeded")
-                                print(f"[RECOVERY] Step succeeded on retry! Resuming plan execution.")
-                                res = retry_res
-                            else:
-                                _emit(f"Retry failed: {retry_res.message}")
-                                print(f"[RECOVERY] Retry failed: {retry_res.message}")
-                        else:
-                            _emit(f"Failed to focus '{target_app}': {focus_res.message}")
-                            print(f"[RECOVERY] Failed to focus window '{target_app}': {focus_res.message}")
-                except Exception as rec_err:
-                    _emit(f"Recovery error: {rec_err}")
-                    print(f"[RECOVERY] Recovery block error: {rec_err}")
-
-            if res.success:
-                _emit(f"✓ {step.tool} completed")
-            elif not res.requires_confirmation:
-                _emit(f"✗ {step.tool} failed: {res.message}")
-
-            results.append(res.to_dict())
-            
-            # If still failed, halt the rest of the plan
-            if not res.success:
-                break
-                
-        return results
-
-    def execute_step(self, step: ActionStep, progress_callback: Optional[Callable[[str], None]] = None) -> ExecutionResult:
-        """Run a single ActionStep safely with PermissionManager."""
-        print(f"[EXECUTOR] Received tool: {step.tool}")
-
-        def _cb(msg: str) -> None:
-            if progress_callback:
-                progress_callback(msg)
-        
-        handler = get_handler(step.tool)
-        tool_found = handler is not None
-        print(f"[EXECUTOR] Tool found: {tool_found}")
-        print(f"[EXECUTOR] Arguments: {step.args}")
-        _cb(f"Dispatching {step.tool}")
-        
-        # 1. Permission Engine Check
-        if PermissionManager.requires_confirmation(step.tool, step.args):
-            logger.warning(f"Confirmation required for tool {step.tool}")
-            message = PermissionManager.build_confirmation_message(step.tool, step.args)
-            _cb(f"Confirmation required for {step.tool}")
-            
-            # Store in session state and get the confirmation ID
-            from agentic.memory.session_state import get_session
-            confirmation_id = get_session().set_pending_action(step.tool, step.args, message)
-            
-            print("[EXECUTOR] Result: requires_confirmation")
-            return ExecutionResult(
-                success=False,
-                tool=step.tool,
-                message=message,
-                requires_confirmation=True,
-                confirmation_id=confirmation_id,
-            )
-
-        # 2. Registry Lookup
-        if not tool_found:
-            # Fallback for unknown/unregistered tools
-            print("[EXECUTOR] Result: failure")
-            return ExecutionResult(
-                success=False,
-                tool=step.tool,
-                message=f"Tool '{step.tool}' is not supported or unregistered."
-            )
-
-        # 3. Execution
-        try:
-            result = handler(step.args)
-            if not result.tool:
-                result.tool = step.tool
-            result_str = "success" if result.success else "failure"
-            print(f"[EXECUTOR] Result: {result_str}")
-            if result.message:
-                _cb(result.message)
-            return result
-        except Exception as e:
-            logger.exception(f"Unhandled exception in tool handler for {step.tool}")
-            print("[EXECUTOR] Result: failure")
-            _cb(f"Handler error: {e}")
-            return ExecutionResult(
-                success=False,
-                tool=step.tool,
-                message=f"Internal handler error: {e}"
-            )
-
-# Alias SystemExecutor for backward compatibility with existing code
+#: Alias so existing code that imports ``SystemExecutor`` continues to work.
 SystemExecutor = DesktopExecutor

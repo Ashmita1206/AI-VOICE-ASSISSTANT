@@ -154,14 +154,14 @@ graph TD
 - **Recovery Strategy**: Ephemeral confirmation states expire automatically after 60 seconds of inactivity.
 
 ### 7. Execution Engine (execution/executor.py)
-- **Purpose**: Run plan steps sequentially.
-- **Input**: `ExecutionPlan` containing action steps.
-- **Output**: List of step-by-step execution result logs.
+- **Purpose**: Run plan steps sequentially using a state-aware lifecycle.
+- **Input**: `ExecutionPlan` containing action steps (optionally with `wait_for`, `timeout`, and `requires` metadata).
+- **Output**: List of step-by-step execution results tracking attempts, lifecycle states, and recovery strategies.
 - **Responsible Module**: `execution`
-- **Important Functions**: `execute_step()`, `execute()`
-- **Important Classes**: `DesktopExecutor`
-- **Failure Cases**: Target application is closed, UI focus changes mid-execution.
-- **Recovery Strategy**: Launches recovery block: takes screenshot, inspects active window, attempts to launch/refocus target app, and retries the failed step once.
+- **Important Functions**: `execute()`, `execute_step()`, `dispatch_wait()`, `dispatch_verify()`, `recover_step()`
+- **Important Classes**: `DesktopExecutor`, `StepRecord`, `ExecutionContext`, `StepStatus`
+- **Failure Cases**: Target application unresponsive, window fails to load, UI focus mismatch, or step verification failure.
+- **Recovery Strategy**: Structured recovery state machine (captures debug screenshot, restores minimized windows, brings target app to foreground, or relaunches process) and retries step up to configured `max_retries` (default: 2).
 
 ### 8. Automation Layer (automation/*)
 - **Purpose**: Interface directly with system resources.
@@ -172,6 +172,103 @@ graph TD
 - **Important Classes**: Programmatic helper functions.
 - **Failure Cases**: Playwright chromium context locks, OS lockscreen blocks.
 - **Recovery Strategy**: Returns failed `ExecutionResult` to executor to trigger recovery logic.
+
+---
+
+## # Stateful Execution Engine
+
+The execution engine is redesigned around a state-aware, sequential state machine that validates the execution state of each action before proceeding to the next step.
+
+### Step Lifecycle
+
+Every step in the execution plan runs through the following state machine:
+
+```mermaid
+stateDiagram-v2
+    [*] --> PENDING
+    PENDING --> EXECUTING : Dispatch handler
+    EXECUTING --> WAITING : Handler success & wait_for is set
+    EXECUTING --> VERIFYING : Handler success & no wait
+    WAITING --> VERIFYING : Wait condition met / Timeout
+    VERIFYING --> SUCCESS : Verification passed
+    VERIFYING --> RECOVERY : Verification failed
+    RECOVERY --> RETRY : Recovery action completed
+    RETRY --> VERIFYING : Re-run handler
+    RECOVERY --> FAILURE : Max retries exhausted
+    SUCCESS --> [*]
+    FAILURE --> [*]
+```
+
+- **PENDING**: The step is queued and waiting to run.
+- **EXECUTING**: The step's registered tool handler is actively running.
+- **WAITING**: The engine is polling for a post-execution readiness condition (e.g. process running or window active) before continuing.
+- **VERIFYING**: The engine checks the operating system state to confirm the step's intent was achieved.
+- **RECOVERY**: Verification failed. The recovery engine applies corrective strategies.
+- **RETRY**: The step's tool handler is executed again.
+- **SUCCESS / FAILURE**: Terminal states. If a step reaches `FAILURE`, the remaining steps of the plan are aborted immediately.
+
+---
+
+### Wait Mechanism
+
+Instead of relying on fixed sleeps (like `time.sleep(2)`), the execution engine uses intelligent wait utilities implemented in [wait_utils.py](file:///d:/ai%20voice%20assisstant/execution/wait_utils.py):
+- `wait_until_process_running(name)`: Polls `psutil` until a process matching the application name appears.
+- `wait_until_window_exists(title)`: Polls window titles using `win32gui` until the window is visible.
+- `wait_until_window_active(title)`: Waits for the target window to become the foreground window.
+- `wait_until_application_ready(name)`: A composite wait (process exists + window exists + window active).
+- `wait_until_element_ready(label)`: Polls coordinate locators until a specific UI element is detected on-screen.
+- `wait_until_browser_loaded()`: Monitors the foreground browser window title and returns when it stops changing (stabilizes).
+
+Each utility has configurable timeouts and polling intervals.
+
+---
+
+### Post-Step Verification
+
+After execution (and any optional wait phase), the system performs best-effort OS validation to verify that the step worked:
+- **Application Launches**: Confirms the process is running and has a visible window.
+- **Window Focus**: Confirms the window title matching the target is visible and in the foreground.
+- **Text Typing / Key Presses**: Fire-and-forget keystroke logs (always passes).
+- **Search Inside App**: Verifies that the application window is still active.
+
+---
+
+### Automated Failure Recovery
+
+If a step fails verification, the engine intercepts the failure and attempts recovery in priority order up to `max_retries` (default: 2):
+1. **Debug Screenshot**: Saves a screenshot to `data/` at the point of failure for offline inspection.
+2. **Relaunch Application**: Attempts to re-start the process if it crashed or failed to open.
+3. **Restore Minimized Window**: If the window is minimized or iconic, restores and maximizes it.
+4. **Bring to Foreground**: Re-asserts foreground window focus for the target app.
+5. **Retry Automation**: Re-executes the tool handler directly.
+
+---
+
+### Planner Support
+
+The Qwen-based Planner outputs metadata fields (`wait_for`, `timeout`, `requires`) in each step JSON:
+
+```json
+{
+  "thought": "Open Spotify and search Believer",
+  "steps": [
+    {
+      "tool": "launch_application",
+      "args": {"application": "spotify"},
+      "wait_for": "window_ready",
+      "timeout": 20
+    },
+    {
+      "tool": "search_inside_application",
+      "args": {"query": "Believer"},
+      "requires": "Spotify Ready"
+    }
+  ],
+  "response": "Opening Spotify and searching for Believer."
+}
+```
+
+The executor parses and enforces these fields, ensuring step $N$ does not execute until step $N-1$ has been fully verified and is ready.
 
 ---
 

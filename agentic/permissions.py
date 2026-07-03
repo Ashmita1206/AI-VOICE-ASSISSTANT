@@ -54,6 +54,13 @@ class PermissionManager:
         "close_window",
         "switch_tab",
         "select_dropdown",
+        # Stateful execution engine wait primitives
+        "wait_until_process_running",
+        "wait_until_window_exists",
+        "wait_until_window_active",
+        "wait_until_application_ready",
+        "wait_until_element_ready",
+        "wait_until_browser_loaded",
     }
     
     # Tools that always require explicit button confirmation
