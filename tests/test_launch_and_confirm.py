@@ -267,15 +267,28 @@ def test_get_active_window_tool(mock_get_info):
 
 @patch("psutil.process_iter")
 @patch("automation.applications.bring_process_to_foreground")
-@patch("win32com.client.Dispatch")
-def test_perform_app_action_spotify_play(mock_dispatch, mock_bring_fg, mock_process_iter):
+@patch("automation.desktop.pyautogui")
+@patch("automation.desktop.win32gui")
+@patch("automation.desktop.win32process")
+@patch("automation.desktop.time.sleep")
+def test_perform_app_action_spotify_play(mock_sleep, mock_win32proc, mock_win32gui, mock_pyautogui, mock_bring_fg, mock_process_iter):
     mock_proc = MagicMock()
     mock_proc.info = {"pid": 9999, "name": "Spotify.exe"}
     mock_process_iter.return_value = [mock_proc]
     
-    mock_shell = MagicMock()
-    mock_dispatch.return_value = mock_shell
+    # Mock EnumWindows to return window handles
+    def mock_enum(cb, extra):
+        cb(12345, None)
+        return True
+    mock_win32gui.EnumWindows.side_effect = mock_enum
+    mock_win32proc.GetWindowThreadProcessId.return_value = (0, 9999)
+    mock_win32gui.IsWindowVisible.return_value = True
     
+    # Discovery window title and playback verification titles
+    titles = ["Spotify Premium", "Spotify Premium", "Darkhaast - Arijit Singh"]
+    mock_win32gui.GetWindowText.side_effect = lambda hwnd: titles.pop(0) if titles else "Darkhaast - Arijit Singh"
+    
+    from automation.applications import perform_app_action
     res = perform_app_action({
         "app": "spotify",
         "action": "play",
@@ -284,7 +297,8 @@ def test_perform_app_action_spotify_play(mock_dispatch, mock_bring_fg, mock_proc
     
     assert res.success is True
     assert "Darkhaast" in res.message
-    mock_shell.SendKeys.assert_any_call("Darkhaast")
+    # Assert pyautogui typed the query
+    mock_pyautogui.write.assert_called_with("Darkhaast", interval=0.03)
     
     session = get_session()
     assert session.last_song == "Darkhaast"
