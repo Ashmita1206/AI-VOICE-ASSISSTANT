@@ -1,0 +1,204 @@
+"""
+Confirmation Service
+====================
+
+Handles button-driven confirmations (proceed / cancel) for pending actions.
+This module is called by the /confirm endpoint and operates independently
+of the main voice pipeline.
+"""
+
+import os
+import time
+import logging
+from typing import Any
+
+from agentic.memory.session_state import get_session
+from execution.registry import get_handler, load_all_tools
+from tts.response_generator import generate_response
+from storage.history_manager import save_session
+from datetime import datetime
+from agentic.permissions import PermissionManager
+
+logger = logging.getLogger(__name__)
+
+# Ensure all tool handlers are registered
+load_all_tools()
+
+
+def handle_confirm(confirmation_id: str, decision: str) -> dict[str, Any]:
+    """Process a user's confirmation decision (proceed or cancel)."""
+    session = get_session()
+
+    from agentic.memory.pending_action import PendingActionManager
+    pending_data = PendingActionManager.get_pending_action()
+
+    if not pending_data or pending_data.get("id") != confirmation_id:
+        # Check session as fallback
+        if session.pending_action and session.pending_action.get("id") == confirmation_id:
+            # Check timeout (60 seconds)
+            if time.time() - session.pending_action.get("timestamp", 0) > 60:
+                return {
+                    "success": False,
+                    "message": "Confirmation request timed out.",
+                }
+            pending_data = {
+                "id": confirmation_id,
+                "plan": {
+                    "intent": "execute_action",
+                    "steps": [
+                        {
+                            "tool": session.pending_action["tool"],
+                            "args": session.pending_action["args"]
+                        }
+                    ]
+                }
+            }
+        else:
+            return {
+                "success": False,
+                "message": "No matching pending action found. It may have already been resolved or timed out.",
+            }
+
+    # Extract first step details for confirmation logging
+    saved_plan = pending_data["plan"]
+    steps_list = saved_plan.get("steps", [])
+    if not steps_list:
+        PendingActionManager.clear()
+        session.clear_pending_action()
+        return {
+            "success": False,
+            "message": "Pending action contains an empty plan.",
+        }
+
+    first_step_dict = steps_list[0]
+    tool_name = first_step_dict["tool"]
+    tool_args = first_step_dict["args"]
+    confirm_msg = PermissionManager.build_confirmation_message(tool_name, tool_args)
+
+    if decision == "cancel":
+        # Clear state
+        PendingActionManager.clear()
+        session.clear_pending_action()
+
+        # Add to short-term history
+        session.add_history(
+            transcript=f"[Cancelled] {confirm_msg}",
+            intent="cancel_confirmation",
+            plan={"tool": tool_name, "args": tool_args},
+            result="Action cancelled.",
+        )
+
+        return {
+            "success": True,
+            "message": "Action cancelled.",
+        }
+
+    if decision == "proceed":
+        # Clear pending BEFORE execution to avoid stale/duplicate triggers
+        PendingActionManager.clear()
+        session.clear_pending_action()
+
+        # Reconstruct remaining execution plan steps
+        from agentic.schemas import ActionStep, ExecutionPlan
+        plan_steps = [
+            ActionStep(tool=s["tool"], args=s["args"])
+            for s in steps_list
+        ]
+
+        # 1. Execute the first step directly (bypassing confirmation)
+        first_step = plan_steps[0]
+        handler = get_handler(first_step.tool)
+        if not handler:
+            return {
+                "success": False,
+                "message": f"Tool '{first_step.tool}' is not registered or available.",
+            }
+
+        try:
+            first_res = handler(first_step.args)
+            exec_results = [first_res.to_dict()]
+
+            # Update session application and directory context if applicable
+            if first_step.tool == "open_application":
+                session.set_context(app=first_step.args.get("application"))
+            elif first_step.tool in ("open_folder", "list_files"):
+                session.set_context(directory=first_step.args.get("path") or first_step.args.get("directory"))
+
+            # 2. If the first step succeeded and there are remaining steps, run them through DesktopExecutor
+            if first_res.success and len(plan_steps) > 1:
+                remaining_plan = ExecutionPlan(
+                    thought="Executing remaining steps after confirmation",
+                    steps=plan_steps[1:],
+                    response=""
+                )
+                from execution.executor import SystemExecutor
+                executor = SystemExecutor()
+                rem_results = executor.execute(remaining_plan)
+                exec_results.extend(rem_results)
+
+            # Generate natural language response text
+            response_text = generate_response(exec_results)
+
+            # Generate TTS audio file
+            audio_url = None
+            try:
+                from web.services import _generate_tts_file
+                audio_path = _generate_tts_file(response_text)
+                if audio_path:
+                    audio_url = f"/static/audio/{os.path.basename(audio_path)}"
+            except Exception as tts_err:
+                logger.warning(f"TTS generation failed after confirmation: {tts_err}")
+
+            # Add to short-term history
+            session.add_history(
+                transcript=f"[Confirmed] {confirm_msg}",
+                intent="execute_confirmed",
+                plan=saved_plan,
+                result=response_text,
+            )
+
+            # Save to persistent SQLite storage
+            save_session({
+                "transcription": f"[Confirmed] {confirm_msg}",
+                "stt": {"model": "", "device": "", "compute_type": "",
+                        "language": "", "confidence": 0, "processing_time_ms": 0},
+                "intent": {"name": "execute_confirmed", "confidence": 100.0},
+                "entities": {},
+                "planner": {"thought": "User confirmed pending action", "steps": steps_list},
+                "execution": exec_results,
+                "speech": {"text": response_text, "audio_url": audio_url},
+                "pipeline_time_ms": 0,
+                "timestamp": datetime.now().isoformat(),
+            })
+
+            return {
+                "success": all(r.get("success", False) for r in exec_results),
+                "message": response_text,
+                "execution": exec_results,
+                "speech": {
+                    "text": response_text,
+                    "audio_url": audio_url,
+                },
+            }
+
+        except Exception as e:
+            logger.exception(f"Error executing confirmed action {tool_name}")
+            return {
+                "success": False,
+                "message": f"Execution failed: {e}",
+            }
+
+    return {
+        "success": False,
+        "message": f"Unknown decision: '{decision}'. Expected 'proceed' or 'cancel'.",
+    }
+
+
+def get_pending_confirmation() -> dict[str, Any] | None:
+    """Return the current pending confirmation for the frontend.
+
+    Called by GET /pending to restore the confirmation card after page refresh.
+    Returns None if no pending action exists.
+    """
+    session = get_session()
+    return session.get_pending_confirmation()

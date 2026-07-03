@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Voice Assistant - History</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+
+  <header class="header">
+    <div class="header-left">
+      <a href="/" class="back-link">Back</a>
+      <div class="header-title">History</div>
+    </div>
+  </header>
+
+  <main class="main">
+    <div id="history-container">
+      <div class="empty-state" id="loading-msg">Loading sessions...</div>
+    </div>
+  </main>
+
+  <script>
+    async function loadHistory() {
+      const container = document.getElementById('history-container');
+      try {
+        const res = await fetch('/history');
+        const sessions = await res.json();
+
+        container.innerHTML = '';
+        if (sessions.length === 0) {
+          container.innerHTML = '<div class="empty-state">No history found.</div>';
+          return;
+        }
+
+        // Group sessions by date
+        const groups = {};
+        sessions.forEach(s => {
+          const d = new Date(s.timestamp);
+          const key = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+          if (!groups[key]) groups[key] = [];
+          groups[key].push(s);
+        });
+
+        for (const [date, items] of Object.entries(groups)) {
+          const dateHeader = document.createElement('div');
+          dateHeader.className = 'date-header';
+          dateHeader.textContent = date;
+          container.appendChild(dateHeader);
+
+          items.forEach(s => {
+            const card = document.createElement('div');
+            card.className = 'hist-card';
+
+            const time = new Date(s.timestamp).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+
+            card.innerHTML = `
+              <div class="hist-summary" onclick="toggleDetail(this)">
+                <div>
+                  <div class="hist-transcript">${esc(s.transcript || 'No speech detected')}</div>
+                  <div class="hist-meta">${time}</div>
+                </div>
+                <span class="hist-chevron">&#9660;</span>
+              </div>
+              <div class="hist-detail">
+                ${detailSection('Transcript', s.transcript || '-')}
+                ${detailSection('Language', (s.language || '-').toUpperCase())}
+                ${detailSection('STT Confidence', s.stt_confidence + '%')}
+                ${detailSection('Intent', '<span class="intent-tag">' + esc(s.intent || 'unknown') + '</span>')}
+                ${detailSection('Entities', '<pre class="json-pre">' + syntaxHL(JSON.stringify(s.entities || {}, null, 2)) + '</pre>')}
+                ${detailSection('Planner', '<pre class="json-pre">' + syntaxHL(JSON.stringify(s.planner_output || {}, null, 2)) + '</pre>')}
+                ${detailSection('Execution', '<pre class="json-pre">' + syntaxHL(JSON.stringify(s.execution_logs || [], null, 2)) + '</pre>')}
+                ${detailSection('Response', '<em>' + esc(s.response_text || '-') + '</em>')}
+              </div>
+            `;
+            container.appendChild(card);
+          });
+        }
+      } catch (err) {
+        container.innerHTML = '<div class="empty-state">Failed to load history.</div>';
+      }
+    }
+
+    function detailSection(title, content) {
+      return `<div class="detail-row"><div class="detail-label">${title}</div><div class="detail-value">${content}</div></div>`;
+    }
+
+    function toggleDetail(el) {
+      const card = el.parentElement;
+      const wasOpen = card.classList.contains('open');
+
+      // Close all
+      document.querySelectorAll('.hist-card.open').forEach(c => c.classList.remove('open'));
+
+      if (!wasOpen) {
+        card.classList.add('open');
+        // Smooth scroll into view
+        setTimeout(() => card.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 50);
+      }
+    }
+
+    function esc(str) {
+      const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' };
+      return String(str).replace(/[&<>"]/g, c => map[c]);
+    }
+
+    function syntaxHL(json) {
+      return json.replace(/("(\\u[\da-fA-F]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+-]?\d+)?)/g, m => {
+        let cls = 'json-number';
+        if (/^"/.test(m)) cls = /:$/.test(m) ? 'json-key' : 'json-string';
+        else if (/true|false/.test(m)) cls = 'json-boolean';
+        else if (/null/.test(m)) cls = 'json-null';
+        return '<span class="' + cls + '">' + m + '</span>';
+      });
+    }
+
+    window.addEventListener('load', loadHistory);
+  </script>
+</body>
+</html>

@@ -24,7 +24,7 @@ import os
 import sys
 
 # Force UTF-8 output on Windows
-if sys.platform == "win32":
+if sys.platform == "win32" and not hasattr(sys.stdout, "_pytest_captured_and_tear_down") and "pytest" not in sys.modules:
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
     os.environ.setdefault("PYTHONIOENCODING", "utf-8")

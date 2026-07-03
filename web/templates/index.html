@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Voice Assistant</title>
+  <meta name="description" content="AI Voice Assistant — real-time speech-to-action." />
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+
+  <header class="header">
+    <div class="header-title">Voice Assistant</div>
+    <nav class="header-nav">
+      <a href="/history_page">History</a>
+    </nav>
+  </header>
+
+  <main class="main">
+
+    <!-- Mic status badge — shown while recording or just after capture -->
+    <div class="mic-status hidden" id="mic-status" aria-live="polite">
+      <div class="mic-status-dot" id="mic-status-dot"></div>
+      <span class="mic-status-text" id="mic-status-text"></span>
+    </div>
+
+    <div class="actions">
+      <button class="btn btn-primary" id="mic-btn">Record Audio</button>
+      <label class="btn" for="upload-input">Upload Audio</label>
+      <input type="file" accept="audio/*" id="upload-input" class="upload-input" />
+    </div>
+
+    <!-- Status text -->
+    <div class="status-text" id="status-text"></div>
+
+    <!-- Confirmation Card (hidden until needed) -->
+    <div class="confirmation-card" id="confirmation-card" style="display:none">
+      <div class="confirm-header">Confirmation Required</div>
+      <div class="confirm-body" id="confirm-body">
+        <div class="confirm-message" id="confirm-message"></div>
+        <div class="confirm-details" id="confirm-details"></div>
+      </div>
+      <div class="confirm-actions" id="confirm-actions">
+        <button class="btn-confirm" id="btn-proceed">Proceed</button>
+        <button class="btn-cancel-action" id="btn-cancel">Cancel</button>
+      </div>
+      <div class="confirm-timer" id="confirm-timer">
+        <span id="confirm-timer-text">60s</span>
+        <div class="confirm-timer-bar">
+          <div class="confirm-timer-fill" id="confirm-timer-fill" style="width:100%"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Result cards — progressively revealed as SSE events arrive -->
+    <div class="sections-stack" id="results-stack">
+
+      <div class="section" id="sec-transcript">
+        <div class="section-title">
+          Transcript
+          <span class="stage-badge" id="badge-transcript"></span>
+        </div>
+        <div class="stage-hint" id="hint-transcript"></div>
+        <div class="text-content" id="transcript-val"></div>
+      </div>
+
+      <div class="section" id="sec-accuracy">
+        <div class="section-title">
+          Accuracy &amp; Metrics
+          <span class="stage-badge" id="badge-accuracy"></span>
+        </div>
+        <div class="stage-hint" id="hint-accuracy"></div>
+        <div class="metrics-row">
+          <div class="metric-pair"><span>Model</span><span id="met-model"></span></div>
+          <div class="metric-pair"><span>Confidence</span><span id="met-conf"></span></div>
+          <div class="metric-pair"><span>Processing</span><span id="met-time"></span></div>
+        </div>
+      </div>
+
+      <div class="section" id="sec-intent">
+        <div class="section-title">
+          Intent
+          <span class="stage-badge" id="badge-intent"></span>
+        </div>
+        <div class="stage-hint" id="hint-intent"></div>
+        <div class="intent-tag" id="intent-val"></div>
+      </div>
+
+      <div class="section" id="sec-entities">
+        <div class="section-title">
+          Entities
+          <span class="stage-badge" id="badge-entities"></span>
+        </div>
+        <div class="stage-hint" id="hint-entities"></div>
+        <div class="entities-grid" id="entities-val"></div>
+      </div>
+
+      <div class="section" id="sec-planner">
+        <div class="section-title">
+          Planner
+          <span class="stage-badge" id="badge-planner"></span>
+        </div>
+        <div class="stage-hint" id="hint-planner"></div>
+        <pre class="json-pre" id="planner-val"></pre>
+      </div>
+
+      <div class="section" id="sec-execution">
+        <div class="section-title">
+          Execution
+          <span class="stage-badge" id="badge-execution"></span>
+        </div>
+        <div class="exec-log-wrap" id="execution-val"></div>
+      </div>
+
+      <div class="section" id="sec-response">
+        <div class="section-title">
+          Assistant Response
+          <span class="stage-badge" id="badge-response"></span>
+        </div>
+        <div class="stage-hint" id="hint-response"></div>
+        <div class="text-content" id="response-text"></div>
+        <audio controls class="audio-player" id="audio-player" style="display:none"></audio>
+      </div>
+
+    </div>
+  </main>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

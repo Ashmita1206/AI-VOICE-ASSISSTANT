@@ -1,20 +1,54 @@
 # ==============================================================
-# AI Voice Assistant — Phase 1 Dependencies
+# AI Voice Assistant — Central Dependencies
 # ==============================================================
 # Install with:  pip install -r requirements.txt
 # ==============================================================
 
-# --- STT (Speech-to-Text) ---
-faster-whisper>=1.1.0        # CTranslate2-optimized Whisper
-torch>=2.0.0                 # CUDA detection + tensor ops
+# Backend
+flask>=3.0.0
+flask-cors>=5.0.0
+python-dotenv>=1.0.1
+requests>=2.31.0
 
-# --- Audio ---
-sounddevice>=0.4.6           # Cross-platform mic recording
-numpy>=1.24.0                # Audio array handling
-scipy>=1.10.0                # WAV file read/write
+# STT — local inference
+# (only required when STT_USE_REMOTE=false in .env)
+# If you use the Colab GPU server (STT_USE_REMOTE=true),
+# you can skip faster-whisper/ctranslate2/torch on the local machine.
+faster-whisper>=1.1.0
+ctranslate2>=4.5.0
+transformers>=4.50.0
+sentencepiece>=0.2.0
+torch>=2.0.0
 
-# --- Evaluation (Phase 2) ---
-jiwer>=3.0.0                 # Word/Character Error Rate metrics
+# Audio
+sounddevice>=0.4.6
+numpy>=1.24.0
+scipy>=1.10.0
 
-# --- Utilities ---
-rich>=13.0.0                 # Pretty terminal output
+# TTS
+edge-tts>=6.0.0
+pyttsx3>=2.90
+pygame>=2.5.0
+
+# Automation
+playwright>=1.54.0
+pyautogui>=0.9.54
+pywin32>=308
+psutil>=7.0.0
+
+# Database
+sqlalchemy>=2.0.0
+
+# Utilities
+rich>=13.0.0
+pydantic>=2.11.0
+pytest>=8.0.0
+jiwer>=3.0.0
+
+# ==============================================================
+# Colab-side dependencies (colab_stt_server.ipynb installs these)
+# ==============================================================
+# The notebook runs:
+#   pip install faster-whisper ctranslate2 flask pyngrok
+# You do NOT need to install these locally unless you want to
+# run the STT server yourself.
