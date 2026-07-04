@@ -379,12 +379,50 @@ def open_application(args: dict[str, Any]) -> ExecutionResult:
 
     # 0. Check if already running
     cleaned = clean_query_for_matching(app_name)
-    
     canonical_match = resolve_canonical_app(cleaned)
+    search_query = canonical_match or cleaned
     if canonical_match and canonical_match in CANONICAL_EXECUTABLES:
         executable = CANONICAL_EXECUTABLES[canonical_match]
         # Skip process scan, launch canonical immediately below if not handled here
         pass
+        
+    try:
+        if win32gui and win32process:
+            hwnds = []
+            def enum_win(hwnd, extra):
+                if win32gui.IsWindowVisible(hwnd):
+                    title = win32gui.GetWindowText(hwnd).lower()
+                    if search_query in title:
+                        hwnds.append((hwnd, title))
+                return True
+            win32gui.EnumWindows(enum_win, None)
+            if hwnds:
+                hwnds.sort(key=lambda x: len(x[1]))  # shortest title match
+                hwnd = hwnds[0][0]
+                _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                bring_process_to_foreground(pid)
+                
+                from agentic.memory.session_state import get_session
+                get_session().set_context(app=cleaned)
+                from agentic.memory.app_context import AppContextManager
+                AppContextManager.set_context(active_app=cleaned, window_handle=None)
+                
+                res = ExecutionResult(
+                    success=True,
+                    tool="open_application",
+                    message=f"Application '{app_name}' is already running. Brought to foreground."
+                )
+                res.app_running = True
+                res.action = "activate_window"
+                def custom_to_dict(self):
+                    d = ExecutionResult.to_dict(self)
+                    d["app_running"] = self.app_running
+                    d["action"] = self.action
+                    return d
+                res.to_dict = types.MethodType(custom_to_dict, res)
+                return res
+    except Exception as e:
+        logger.debug(f"Window enumeration failed: {e}")
         
     running_match_pid = None
     try:
@@ -488,6 +526,30 @@ def launch_application(args: dict[str, Any]) -> ExecutionResult:
     cleaned = clean_query_for_matching(app_name)
     canonical_match = resolve_canonical_app(cleaned)
     search_query = canonical_match or cleaned
+    
+    try:
+        if win32gui and win32process:
+            hwnds = []
+            def enum_win_launch(hwnd, extra):
+                if win32gui.IsWindowVisible(hwnd):
+                    title = win32gui.GetWindowText(hwnd).lower()
+                    if search_query in title:
+                        hwnds.append((hwnd, title))
+                return True
+            win32gui.EnumWindows(enum_win_launch, None)
+            if hwnds:
+                hwnds.sort(key=lambda x: len(x[1]))
+                hwnd = hwnds[0][0]
+                _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                bring_process_to_foreground(pid)
+                return ExecutionResult(
+                    success=True,
+                    tool="launch_application",
+                    message=f"Reused existing window for '{app_name}'."
+                )
+    except Exception as e:
+        logger.debug(f"Window enumeration failed: {e}")
+        
     running_match_pid = None
     try:
         import psutil

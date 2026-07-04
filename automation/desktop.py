@@ -288,6 +288,20 @@ def type_text(args: dict[str, Any]) -> ExecutionResult:
 
     try:
         pyautogui.write(text, interval=0.03)
+        time.sleep(0.5)
+        
+        # --- Verification using pyperclip ---
+        pyautogui.hotkey("ctrl", "a")
+        pyautogui.hotkey("ctrl", "c")
+        time.sleep(0.3)
+        import pyperclip
+        pasted = pyperclip.paste().strip()
+        if text.lower() not in pasted.lower():
+            return ExecutionResult(success=False, tool="type_text", message="Text was not verified. UI may not be ready or focus lost.")
+        pyautogui.press("right")
+        time.sleep(0.1)
+        # ------------------------------------
+
         return ExecutionResult(
             success=True,
             tool="type_text",
@@ -518,6 +532,19 @@ def search_inside_application(args: dict[str, Any]) -> ExecutionResult:
             time.sleep(0.2)
             pyautogui.write(query, interval=0.03)
             time.sleep(1.2)
+            
+            # --- Verification using pyperclip ---
+            pyautogui.hotkey("ctrl", "a")
+            pyautogui.hotkey("ctrl", "c")
+            time.sleep(0.3)
+            import pyperclip
+            pasted = pyperclip.paste().strip()
+            if query.lower() not in pasted.lower():
+                return ExecutionResult(success=False, tool="search_inside_application", message="Search box was not focused or text was not entered. UI may not be ready.")
+            pyautogui.press("right")
+            time.sleep(0.1)
+            # ------------------------------------
+            
             pyautogui.press("down")
             time.sleep(0.3)
             pyautogui.press("enter")
@@ -708,8 +735,20 @@ def search_inside_application(args: dict[str, Any]) -> ExecutionResult:
             pyautogui.hotkey("ctrl", "l")
             time.sleep(0.3)
             pyautogui.write(query, interval=0.03)
+            time.sleep(1.5)
+            
+            # --- Verification using pyperclip ---
+            pyautogui.hotkey("ctrl", "a")
+            pyautogui.hotkey("ctrl", "c")
             time.sleep(0.3)
-            pyautogui.press("enter")
+            import pyperclip
+            pasted = pyperclip.paste().strip()
+            if query.lower() not in pasted.lower():
+                return ExecutionResult(success=False, tool="search_inside_application", message="Spotify search box was not focused or text was not entered.")
+            pyautogui.press("right")
+            time.sleep(0.1)
+            # ------------------------------------
+            
             return ExecutionResult(success=True, tool="search_inside_application", message=f"Searched for '{query}' in browser address bar.")
 
         # Default Fallback: Ctrl+F search
