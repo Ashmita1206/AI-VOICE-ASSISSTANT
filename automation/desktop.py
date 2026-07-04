@@ -522,11 +522,19 @@ def search_inside_application(args: dict[str, Any]) -> ExecutionResult:
 
     try:
         if "whatsapp" in app or "whatsapp" in window_title:
-            if "chrome" in app or "edge" in app or "firefox" in app or "browser" in app:
-                pyautogui.hotkey("ctrl", "alt", "/")
+            coords = estimate_ui_coordinates("search", "whatsapp")
+            if coords:
+                logger.info(f"[WHATSAPP] Clicking estimated search coordinates: {coords}")
+                pyautogui.click(coords[0], coords[1])
+                time.sleep(0.5)
             else:
-                pyautogui.hotkey("ctrl", "f")
-            time.sleep(0.5)
+                logger.warning("[WHATSAPP] Could not estimate search coordinates, falling back to shortcuts.")
+                if "chrome" in app or "edge" in app or "firefox" in app or "browser" in app:
+                    pyautogui.hotkey("ctrl", "alt", "/")
+                else:
+                    pyautogui.hotkey("ctrl", "f")
+                time.sleep(0.5)
+            
             pyautogui.hotkey("ctrl", "a")
             pyautogui.press("backspace")
             time.sleep(0.2)
