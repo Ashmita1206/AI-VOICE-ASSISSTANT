@@ -18,6 +18,9 @@ class PlannerStep:
     """A single tool invocation step."""
     tool: str
     args: dict[str, Any] = field(default_factory=dict)
+    wait_for: str | None = None
+    timeout: int | float | None = None
+    requires: str | None = None
 
 
 @dataclass
@@ -47,7 +50,16 @@ class PlannerOutput:
             "intent": self.intent,
             "confidence": self.confidence,
             "reasoning": self.reasoning,
-            "steps": [{"tool": s.tool, "args": s.args} for s in self.steps],
+            "steps": [
+                {
+                    "tool": s.tool,
+                    "args": s.args,
+                    **({"wait_for": s.wait_for} if s.wait_for else {}),
+                    **({"timeout": s.timeout} if s.timeout else {}),
+                    **({"requires": s.requires} if s.requires else {})
+                }
+                for s in self.steps
+            ],
         }
 
     # ── Deserialisation ──────────────────────────────────────────────
@@ -57,7 +69,10 @@ class PlannerOutput:
         steps = [
             PlannerStep(
                 tool=s.get("tool", "unknown"),
-                args=s.get("args", {})
+                args=s.get("args", {}),
+                wait_for=s.get("wait_for"),
+                timeout=s.get("timeout"),
+                requires=s.get("requires")
             )
             for s in data.get("steps", [])
         ]

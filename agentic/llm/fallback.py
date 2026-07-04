@@ -101,8 +101,10 @@ def apply_heuristic_fallback(transcription: str) -> PlannerOutput:
             confidence=0.9,
             reasoning=f"Matched WhatsApp messaging flow for '{contact}'.",
             steps=[
+                PlannerStep(tool="launch_application", args={"application": "WhatsApp"}, wait_for="window_ready", timeout=20),
                 PlannerStep(tool="focus_window", args={"target": "WhatsApp"}),
                 PlannerStep(tool="search_inside_application", args={"query": contact}),
+                PlannerStep(tool="press_key", args={"key": "enter"}),
                 PlannerStep(tool="type_text", args={"text": message}),
                 PlannerStep(tool="press_key", args={"key": "enter"})
             ]
@@ -124,8 +126,11 @@ def apply_heuristic_fallback(transcription: str) -> PlannerOutput:
                 confidence=0.9,
                 reasoning=f"Matched Spotify play for song: '{song}'.",
                 steps=[
+                    PlannerStep(tool="launch_application", args={"application": "Spotify"}, wait_for="window_ready", timeout=25),
                     PlannerStep(tool="focus_window", args={"target": "Spotify"}),
-                    PlannerStep(tool="search_inside_application", args={"query": song})
+                    PlannerStep(tool="search_inside_application", args={"query": song}),
+                    PlannerStep(tool="press_key", args={"key": "enter"}),
+                    PlannerStep(tool="perform_app_action", args={"action": "play"})
                 ]
             )
             
@@ -154,8 +159,9 @@ def apply_heuristic_fallback(transcription: str) -> PlannerOutput:
             confidence=0.8,
             reasoning="Matched browser search.",
             steps=[
-                PlannerStep(tool="open_browser", args={}),
-                PlannerStep(tool="search_web", args={"query": query})
+                PlannerStep(tool="launch_application", args={"application": "chrome"}, wait_for="window_ready", timeout=20),
+                PlannerStep(tool="focus_window", args={"target": "Chrome"}),
+                PlannerStep(tool="search_inside_application", args={"query": query})
             ]
         )
 

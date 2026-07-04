@@ -80,11 +80,45 @@ def test_fallback_heuristic_open_browser_search():
     plan = apply_heuristic_fallback(text)
     
     assert plan.intent == "search_web"
-    assert len(plan.steps) == 2
+    assert len(plan.steps) == 3
     
     # Check open_browser step
-    assert plan.steps[0].tool == "open_browser"
+    assert plan.steps[0].tool == "launch_application"
+    assert plan.steps[0].args["application"] == "chrome"
     
-    # Check search_web step & query extraction
-    assert plan.steps[1].tool == "search_web"
-    assert plan.steps[1].args["query"] == "machine learning and aiml"
+    # Check focus window
+    assert plan.steps[1].tool == "focus_window"
+    assert plan.steps[1].args["target"] == "Chrome"
+    
+    # Check search step & query extraction
+    assert plan.steps[2].tool == "search_inside_application"
+    assert plan.steps[2].args["query"] == "machine learning and aiml"
+
+def test_fallback_heuristic_whatsapp():
+    """Test WhatsApp sequence."""
+    text = "send hi to Harshita on whatsapp"
+    plan = apply_heuristic_fallback(text)
+    assert plan.intent == "send_whatsapp"
+    assert len(plan.steps) == 6
+    assert plan.steps[0].tool == "launch_application"
+    assert plan.steps[0].wait_for == "window_ready"
+    assert plan.steps[1].tool == "focus_window"
+    assert plan.steps[2].tool == "search_inside_application"
+    assert plan.steps[3].tool == "press_key"
+    assert plan.steps[4].tool == "type_text"
+    assert plan.steps[4].args["text"] == "hi"
+    assert plan.steps[5].tool == "press_key"
+
+def test_fallback_heuristic_spotify():
+    """Test Spotify sequence."""
+    text = "play Believer on spotify"
+    plan = apply_heuristic_fallback(text)
+    assert plan.intent == "play_music"
+    assert len(plan.steps) == 5
+    assert plan.steps[0].tool == "launch_application"
+    assert plan.steps[0].wait_for == "window_ready"
+    assert plan.steps[1].tool == "focus_window"
+    assert plan.steps[2].tool == "search_inside_application"
+    assert plan.steps[2].args["query"] == "believer"
+    assert plan.steps[3].tool == "press_key"
+    assert plan.steps[4].tool == "perform_app_action"

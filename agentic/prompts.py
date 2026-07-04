@@ -63,6 +63,10 @@ FEW_SHOT_EXAMPLES = [
       "timeout": 20
     },
     {
+      "tool": "focus_window",
+      "args": {"target": "Chrome"}
+    },
+    {
       "tool": "search_inside_application",
       "args": {"query": "machine learning"},
       "requires": "Chrome Ready"
@@ -81,12 +85,22 @@ FEW_SHOT_EXAMPLES = [
   "thought": "User wants to send a message on WhatsApp. I will focus the window, search for the contact, type the message, and send it.",
   "steps": [
     {
+      "tool": "launch_application",
+      "args": {"application": "whatsapp"},
+      "wait_for": "window_ready",
+      "timeout": 20
+    },
+    {
       "tool": "focus_window",
       "args": {"target": "WhatsApp"}
     },
     {
       "tool": "search_inside_application",
       "args": {"query": "Harshita"}
+    },
+    {
+      "tool": "press_key",
+      "args": {"key": "enter"}
     },
     {
       "tool": "type_text",
@@ -117,11 +131,23 @@ FEW_SHOT_EXAMPLES = [
       "requires": null
     },
     {
+      "tool": "focus_window",
+      "args": {"target": "Spotify"}
+    },
+    {
       "tool": "search_inside_application",
       "args": {"query": "Believer"},
       "wait_for": "element_ready",
       "timeout": 10,
       "requires": "Spotify Ready"
+    },
+    {
+      "tool": "press_key",
+      "args": {"key": "enter"}
+    },
+    {
+      "tool": "perform_app_action",
+      "args": {"action": "play"}
     }
   ],
   "response": "Launching Spotify and playing Believer."
