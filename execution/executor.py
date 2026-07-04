@@ -292,7 +292,7 @@ class DesktopExecutor:
             record.mark_waiting()
             emit(f"  ⏳ Waiting: {record.wait_for} (timeout={record.timeout or 'default'}s)…")
             wait_result: WaitResult = dispatch_wait(
-                record.wait_for, step.args, record.timeout
+                record.wait_for, step.args, result, record.timeout
             )
             record.metadata["wait_result"] = {
                 "success": wait_result.success,
@@ -405,7 +405,7 @@ class DesktopExecutor:
             if record.wait_for and result.success:
                 record.mark_waiting()
                 emit(f"  ⏳ Re-waiting: {record.wait_for}…")
-                wait_result = dispatch_wait(record.wait_for, step.args, record.timeout)
+                wait_result = dispatch_wait(record.wait_for, step.args, result, record.timeout)
                 if not wait_result.success:
                     emit(f"  ⚠ Wait failed on retry: {wait_result.message}")
                     result = ExecutionResult(

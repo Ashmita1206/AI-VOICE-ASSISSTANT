@@ -24,7 +24,8 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Any
+from execution.schemas import ExecutionResult
 
 logger = logging.getLogger(__name__)
 
@@ -333,17 +334,15 @@ def wait_until_application_ready(
     total_ms = int((time.perf_counter() - start) * 1000)
 
     if not r3.success:
-        # Non-fatal: window exists but may not be foreground yet (e.g. UAC dialog)
-        # Return partial success so execution can continue with a focus attempt.
         logger.warning(
-            f"[WAIT] '{app_name}' window exists but did not become active: {r3.message}"
+            f"[WAIT] '{app_name}' window exists but did not become active within timeout."
         )
         return WaitResult(
-            success=True,   # process + window present is enough to proceed
+            success=False,
             elapsed_ms=total_ms,
             message=(
-                f"Application '{app_name}' is running and window exists "
-                f"(not yet foreground — may need focus step)."
+                f"Application '{app_name}' window exists but did not become active "
+                f"within {timeout}s timeout."
             )
         )
 
@@ -468,6 +467,7 @@ def wait_until_browser_loaded(
 def dispatch_wait(
     wait_for: str,
     args: dict,
+    result: Optional[ExecutionResult] = None,
     timeout: Optional[float] = None,
 ) -> WaitResult:
     """Route a ``wait_for`` metadata string to the appropriate wait primitive.
@@ -500,10 +500,19 @@ def dispatch_wait(
     kwargs: dict = {}
     if timeout is not None:
         kwargs["timeout"] = float(timeout)
+        
+    opened_in_browser = False
+    if result and getattr(result, "metadata", {}).get("opened_in_browser"):
+        opened_in_browser = True
 
     wf = wait_for.lower().strip()
 
     if wf in ("window_ready", "application_ready"):
+        if opened_in_browser:
+            r_browser = wait_until_browser_loaded(**kwargs)
+            if not r_browser.success:
+                return r_browser
+            return wait_until_window_active(app_name, **kwargs)
         return wait_until_application_ready(app_name, **kwargs)
     elif wf == "process_running":
         return wait_until_process_running(app_name, **kwargs)

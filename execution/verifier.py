@@ -326,6 +326,11 @@ def dispatch_verify(tool: str, args: dict, result) -> VerifyResult:
 
     # Application launch / open tools
     if tool in ("open_application", "launch_application", "resolve_and_open"):
+        opened_in_browser = getattr(result, "metadata", {}).get("opened_in_browser", False)
+        if opened_in_browser:
+            if not _is_window_visible(app):
+                return VerifyResult(passed=False, message=f"Browser tab for '{app}' is not visible.")
+            return VerifyResult(passed=True, message=f"Browser fallback for '{app}' is visible.")
         return verify_application_launched(app) if app else verify_generic(tool, result.success)
 
     # Window focus tools

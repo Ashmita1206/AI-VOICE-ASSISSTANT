@@ -569,12 +569,11 @@ def launch_application(args: dict[str, Any]) -> ExecutionResult:
             url = "https://web.whatsapp.com"
         import webbrowser
         webbrowser.open_new_tab(url)
-        # Give the browser ample time to boot up, load the webpage, and focus viewport
-        time.sleep(6.0)
         return ExecutionResult(
             success=True,
             tool="launch_application",
-            message=f"Could not launch '{app_name}' locally. Opened browser fallback: {url}"
+            message=f"Could not launch '{app_name}' locally. Opened browser fallback: {url}",
+            metadata={"opened_in_browser": True, "url": url}
         )
     except Exception as e:
         return ExecutionResult(

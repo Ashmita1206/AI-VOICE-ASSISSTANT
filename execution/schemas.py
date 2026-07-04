@@ -48,6 +48,7 @@ class ExecutionResult:
     state: str = ""               # e.g. "success", "failure", "recovery"
     attempts: int = 1             # number of execution attempts (1 = first try)
     recovery_used: bool = False   # True if a recovery strategy was invoked
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         d = {
@@ -61,6 +62,7 @@ class ExecutionResult:
             "state": self.state or ("success" if self.success else "failure"),
             "attempts": self.attempts,
             "recovery_used": self.recovery_used,
+            "metadata": self.metadata,
         }
         if self.confirmation_id:
             d["confirmation_id"] = self.confirmation_id

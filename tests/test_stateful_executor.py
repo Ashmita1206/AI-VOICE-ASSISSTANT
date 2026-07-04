@@ -424,7 +424,7 @@ class TestDesktopExecutorHappyPath:
 
             results = executor.execute(plan)
 
-        dw.assert_called_once_with("window_ready", {"application": "spotify"}, 20)
+        dw.assert_called_once_with("window_ready", {"application": "spotify"}, ok_result, 20)
         assert results[0]["success"] is True
 
 

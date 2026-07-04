@@ -335,9 +335,10 @@ def test_heuristic_fallback_stateful_commands():
     
     res_play = apply_heuristic_fallback("Play Darkhaast")
     assert res_play.intent == "play_music"
-    assert res_play.steps[0].tool == "focus_window"
-    assert res_play.steps[1].tool == "search_inside_application"
-    assert res_play.steps[1].args["query"] == "darkhaast"
+    assert res_play.steps[0].tool == "launch_application"
+    assert res_play.steps[1].tool == "focus_window"
+    assert res_play.steps[2].tool == "search_inside_application"
+    assert res_play.steps[2].args["query"] == "darkhaast"
     
     res_pause = apply_heuristic_fallback("Pause it")
     assert res_pause.intent == "pause_music"
@@ -348,13 +349,13 @@ def test_heuristic_fallback_stateful_commands():
     session.set_context(app="whatsapp")
     res_wa = apply_heuristic_fallback("Search Harshita and write hi on WhatsApp")
     assert res_wa.intent == "send_whatsapp"
-    assert len(res_wa.steps) == 4
-    assert res_wa.steps[0].tool == "focus_window"
-    assert res_wa.steps[1].tool == "search_inside_application"
-    assert res_wa.steps[2].tool == "type_text"
+    assert len(res_wa.steps) == 6
+    assert res_wa.steps[0].tool == "launch_application"
+    assert res_wa.steps[1].tool == "focus_window"
+    assert res_wa.steps[2].tool == "search_inside_application"
     assert res_wa.steps[3].tool == "press_key"
-    assert res_wa.steps[1].args["query"] == "Harshita"
-    assert res_wa.steps[2].args["text"] == "hi"
+    assert res_wa.steps[2].args["query"] == "Harshita"
+    assert res_wa.steps[4].args["text"] == "hi"
 
 @patch("psutil.process_iter")
 @patch("automation.applications.bring_process_to_foreground")
