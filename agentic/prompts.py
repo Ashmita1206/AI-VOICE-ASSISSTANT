@@ -63,10 +63,6 @@ FEW_SHOT_EXAMPLES = [
       "timeout": 20
     },
     {
-      "tool": "focus_window",
-      "args": {"target": "Chrome"}
-    },
-    {
       "tool": "search_inside_application",
       "args": {"query": "machine learning"},
       "requires": "Chrome Ready"
@@ -89,10 +85,6 @@ FEW_SHOT_EXAMPLES = [
       "args": {"application": "whatsapp"},
       "wait_for": "window_ready",
       "timeout": 20
-    },
-    {
-      "tool": "focus_window",
-      "args": {"target": "WhatsApp"}
     },
     {
       "tool": "search_inside_application",
@@ -129,10 +121,6 @@ FEW_SHOT_EXAMPLES = [
       "wait_for": "window_ready",
       "timeout": 25,
       "requires": null
-    },
-    {
-      "tool": "focus_window",
-      "args": {"target": "Spotify"}
     },
     {
       "tool": "search_inside_application",

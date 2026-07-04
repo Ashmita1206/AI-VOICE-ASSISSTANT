@@ -142,10 +142,67 @@ def clean_query_name(query: str) -> str:
     """Legacy cleaner wrapper."""
     return clean_query_for_matching(query)
 
-def bring_process_to_foreground(pid: int) -> bool:
-    """Find visible HWNDs for process ID and bring them to foreground."""
+import ctypes
+
+def force_focus_window(hwnd: int) -> bool:
+    """Robustly focus a window using AttachThreadInput to bypass foreground lock rules."""
     if not win32gui or not win32process:
         return False
+        
+    try:
+        # 1. If minimized, restore
+        if win32gui.IsIconic(hwnd):
+            win32gui.ShowWindow(hwnd, 9) # SW_RESTORE
+        else:
+            win32gui.ShowWindow(hwnd, 5) # SW_SHOW
+            
+        # 2. Bring near foreground
+        win32gui.BringWindowToTop(hwnd)
+        
+        # 3. Attach thread inputs to steal focus lock
+        foreground_hwnd = win32gui.GetForegroundWindow()
+        if foreground_hwnd == hwnd:
+            return True
+            
+        import win32api
+        current_thread_id = win32api.GetCurrentThreadId()
+        target_thread_id, _ = win32process.GetWindowThreadProcessId(hwnd)
+        foreground_thread_id, _ = win32process.GetWindowThreadProcessId(foreground_hwnd) if foreground_hwnd else (0, 0)
+        
+        attached = False
+        if foreground_thread_id and foreground_thread_id != current_thread_id:
+            try:
+                win32process.AttachThreadInput(current_thread_id, foreground_thread_id, True)
+                attached = True
+            except Exception:
+                pass
+                
+        # 4. Force focus
+        try:
+            win32gui.SetForegroundWindow(hwnd)
+            ctypes.windll.user32.SetActiveWindow(hwnd)
+            ctypes.windll.user32.SetFocus(hwnd)
+        except Exception as e:
+            logger.debug(f"Focusing APIs failed: {e}")
+            
+        # 5. Detach thread inputs
+        if attached:
+            try:
+                win32process.AttachThreadInput(current_thread_id, foreground_thread_id, False)
+            except Exception:
+                pass
+                
+        # 6. Verify
+        time.sleep(0.1)
+        return win32gui.GetForegroundWindow() == hwnd
+    except Exception as e:
+        logger.debug(f"force_focus_window failed: {e}")
+        return False
+
+def bring_process_to_foreground(pid: int) -> int | None:
+    """Find visible HWNDs for process ID and bring them to foreground. Returns the focused HWND or None."""
+    if not win32gui or not win32process:
+        return None
         
     found_hwnds = []
     
@@ -165,17 +222,10 @@ def bring_process_to_foreground(pid: int) -> bool:
         
     if found_hwnds:
         for hwnd in found_hwnds:
-            try:
-                # SW_RESTORE = 9, SW_SHOW = 5
-                if win32gui.IsIconic(hwnd):
-                    win32gui.ShowWindow(hwnd, 9)
-                else:
-                    win32gui.ShowWindow(hwnd, 5)
-                win32gui.SetForegroundWindow(hwnd)
-            except Exception as e:
-                logger.debug(f"SetForegroundWindow failed: {e}")
-        return True
-    return False
+            if force_focus_window(hwnd):
+                return hwnd
+        return None
+    return None
 
 def get_start_apps() -> list[dict[str, str]]:
     """Retrieve Windows Start Menu apps using PowerShell Get-StartApps."""
@@ -405,7 +455,7 @@ def open_application(args: dict[str, Any]) -> ExecutionResult:
                 from agentic.memory.session_state import get_session
                 get_session().set_context(app=cleaned)
                 from agentic.memory.app_context import AppContextManager
-                AppContextManager.set_context(active_app=cleaned, window_handle=None)
+                AppContextManager.set_context(active_app=cleaned, window_handle=hwnd)
                 
                 res = ExecutionResult(
                     success=True,
@@ -440,11 +490,11 @@ def open_application(args: dict[str, Any]) -> ExecutionResult:
         pass
 
     if running_match_pid:
-        bring_process_to_foreground(running_match_pid)
+        hwnd = bring_process_to_foreground(running_match_pid)
         from agentic.memory.session_state import get_session
         get_session().set_context(app=cleaned)
         from agentic.memory.app_context import AppContextManager
-        AppContextManager.set_context(active_app=cleaned, window_handle=None)
+        AppContextManager.set_context(active_app=cleaned, window_handle=hwnd)
         
         res = ExecutionResult(
             success=True,
@@ -544,6 +594,10 @@ def launch_application(args: dict[str, Any]) -> ExecutionResult:
                 hwnd = hwnds[0][0]
                 _, pid = win32process.GetWindowThreadProcessId(hwnd)
                 bring_process_to_foreground(pid)
+                
+                from agentic.memory.app_context import AppContextManager
+                AppContextManager.set_context(active_app=cleaned, window_handle=hwnd)
+                
                 return ExecutionResult(
                     success=True,
                     tool="launch_application",
@@ -567,7 +621,9 @@ def launch_application(args: dict[str, Any]) -> ExecutionResult:
         pass
 
     if running_match_pid:
-        bring_process_to_foreground(running_match_pid)
+        hwnd = bring_process_to_foreground(running_match_pid)
+        from agentic.memory.app_context import AppContextManager
+        AppContextManager.set_context(active_app=cleaned, window_handle=hwnd)
         return ExecutionResult(
             success=True,
             tool="launch_application",

@@ -126,6 +126,20 @@ def focus_window(args: dict[str, Any]) -> ExecutionResult:
     if not win32gui:
         return ExecutionResult(success=False, tool="focus_window", message="win32gui is not available.")
 
+    from agentic.memory.app_context import AppContextManager
+    from automation.applications import force_focus_window
+    
+    cached_hwnd = AppContextManager.get_context().get("window_handle")
+    cached_app = AppContextManager.get_context().get("active_app", "").lower()
+    
+    if cached_hwnd and (target in cached_app or cached_app in target):
+        if force_focus_window(cached_hwnd):
+            return ExecutionResult(
+                success=True,
+                tool="focus_window",
+                message=f"Brought cached window matching '{target}' to the foreground."
+            )
+
     hwnds = []
     def enum_win(hwnd, extra):
         if win32gui.IsWindowVisible(hwnd):
@@ -140,24 +154,19 @@ def focus_window(args: dict[str, Any]) -> ExecutionResult:
         logger.debug(f"EnumWindows failed: {enum_err}")
     if hwnds:
         hwnd = hwnds[0]
-        try:
-            if win32gui.IsIconic(hwnd):
-                win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-            else:
-                win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
-            win32gui.SetForegroundWindow(hwnd)
-            
+        if force_focus_window(hwnd):
             # Save context
             from agentic.memory.session_state import get_session
             get_session().set_context(app=target)
+            AppContextManager.set_context(active_app=target, window_handle=hwnd)
             
             return ExecutionResult(
                 success=True,
                 tool="focus_window",
                 message=f"Brought window matching '{target}' to the foreground."
             )
-        except Exception as e:
-            return ExecutionResult(success=False, tool="focus_window", message=f"Failed to focus window: {e}")
+        else:
+            return ExecutionResult(success=False, tool="focus_window", message=f"Failed to force focus window for '{target}'.")
             
     # Try using psutil as fallback
     try:
