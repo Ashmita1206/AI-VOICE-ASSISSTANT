@@ -327,11 +327,23 @@ def dispatch_verify(tool: str, args: dict, result) -> VerifyResult:
     # Application launch / open tools
     if tool in ("open_application", "launch_application", "resolve_and_open"):
         opened_in_browser = getattr(result, "metadata", {}).get("opened_in_browser", False)
-        if opened_in_browser:
-            if not _is_window_visible(app):
-                return VerifyResult(passed=False, message=f"Browser tab for '{app}' is not visible.")
-            return VerifyResult(passed=True, message=f"Browser fallback for '{app}' is visible.")
-        return verify_application_launched(app) if app else verify_generic(tool, result.success)
+        reused_window = getattr(result, "metadata", {}).get("reused_window", False)
+        if opened_in_browser or reused_window:
+            if not _is_window_foreground(app):
+                return VerifyResult(passed=False, message=f"Window for '{app}' is not active/foreground.")
+            return VerifyResult(passed=True, message=f"Window for '{app}' is active and foreground.")
+            
+        # Strict verification for native apps: process must exist and window must be foreground
+        v_res = verify_application_launched(app)
+        if not v_res.passed:
+            return v_res
+            
+        # Wait, verify_application_launched only checks _is_window_visible.
+        # Let's enforce foreground check.
+        if not _is_window_foreground(app):
+            return VerifyResult(passed=False, message=f"Application '{app}' launched but is not the active foreground window.")
+            
+        return VerifyResult(passed=True, message=f"Application '{app}' is launched and active.")
 
     # Window focus tools
     if tool in ("focus_window", "wait_for_window"):

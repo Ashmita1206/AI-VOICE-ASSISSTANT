@@ -280,7 +280,8 @@ class TestDispatchVerify:
     def test_launch_tool_routes_to_application_verifier(self):
         from execution.verifier import dispatch_verify
         result = _make_result(success=True)
-        with patch("execution.verifier.verify_application_launched") as m:
+        with patch("execution.verifier.verify_application_launched") as m, \
+             patch("execution.verifier._is_window_foreground", return_value=True):
             m.return_value = MagicMock(passed=True, message="ok")
             vr = dispatch_verify("launch_application", {"application": "spotify"}, result)
         m.assert_called_once_with("spotify")

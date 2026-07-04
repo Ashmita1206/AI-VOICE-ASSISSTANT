@@ -277,6 +277,7 @@ def wait_until_application_ready(
     app_name: str,
     timeout: float = 20.0,
     poll_interval: float = 0.5,
+    skip_process_check: bool = False,
 ) -> WaitResult:
     """Composite wait: process running **and** window visible **and** window active.
 
@@ -299,20 +300,23 @@ def wait_until_application_ready(
     """
     start = time.perf_counter()
 
-    # Phase 1: Process must appear
-    phase_timeout = timeout * 0.5  # first half of budget
-    r1 = wait_until_process_running(app_name, timeout=phase_timeout, poll_interval=poll_interval)
-    if not r1.success:
-        return WaitResult(
-            success=False,
-            elapsed_ms=int((time.perf_counter() - start) * 1000),
-            message=f"Application '{app_name}' process did not start: {r1.message}"
-        )
+    # Phase 1: Process must appear (if not skipped)
+    if not skip_process_check:
+        phase_timeout = timeout * 0.5  # first half of budget
+        r1 = wait_until_process_running(app_name, timeout=phase_timeout, poll_interval=poll_interval)
+        if not r1.success:
+            return WaitResult(
+                success=False,
+                elapsed_ms=int((time.perf_counter() - start) * 1000),
+                message=f"Application '{app_name}' process did not start: {r1.message}"
+            )
 
-    remaining = timeout - (time.perf_counter() - start)
-    if remaining <= 0:
-        return WaitResult(success=False, elapsed_ms=int(timeout * 1000),
-                          message=f"Timeout after process wait for '{app_name}'.")
+        remaining = timeout - (time.perf_counter() - start)
+        if remaining <= 0:
+            return WaitResult(success=False, elapsed_ms=int(timeout * 1000),
+                              message=f"Timeout after process wait for '{app_name}'.")
+    else:
+        remaining = timeout
 
     # Phase 2: Window must appear
     phase_timeout2 = remaining * 0.6
@@ -502,18 +506,18 @@ def dispatch_wait(
         kwargs["timeout"] = float(timeout)
         
     opened_in_browser = False
-    if result and getattr(result, "metadata", {}).get("opened_in_browser"):
-        opened_in_browser = True
+    reused_window = False
+    if result:
+        meta = getattr(result, "metadata", {}) or {}
+        opened_in_browser = meta.get("opened_in_browser", False)
+        reused_window = meta.get("reused_window", False)
 
     wf = wait_for.lower().strip()
 
     if wf in ("window_ready", "application_ready"):
-        if opened_in_browser:
-            r_browser = wait_until_browser_loaded(**kwargs)
-            if not r_browser.success:
-                return r_browser
-            return wait_until_window_active(app_name, **kwargs)
-        return wait_until_application_ready(app_name, **kwargs)
+        if opened_in_browser or reused_window:
+            return wait_until_application_ready(app_name, skip_process_check=True, **kwargs)
+        return wait_until_application_ready(app_name, skip_process_check=False, **kwargs)
     elif wf == "process_running":
         return wait_until_process_running(app_name, **kwargs)
     elif wf == "window_exists":

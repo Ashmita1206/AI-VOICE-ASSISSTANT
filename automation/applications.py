@@ -410,7 +410,8 @@ def open_application(args: dict[str, Any]) -> ExecutionResult:
                 res = ExecutionResult(
                     success=True,
                     tool="open_application",
-                    message=f"Application '{app_name}' is already running. Brought to foreground."
+                    message=f"Application '{app_name}' is already running. Brought to foreground.",
+                    metadata={"reused_window": True}
                 )
                 res.app_running = True
                 res.action = "activate_window"
@@ -448,7 +449,8 @@ def open_application(args: dict[str, Any]) -> ExecutionResult:
         res = ExecutionResult(
             success=True,
             tool="open_application",
-            message=f"Application {app_name} is already running. Brought to foreground."
+            message=f"Application '{app_name}' is already running (PID {running_match_pid}). Brought to foreground.",
+            metadata={"reused_window": True}
         )
         res.app_running = True
         res.action = "activate_window"
@@ -545,7 +547,8 @@ def launch_application(args: dict[str, Any]) -> ExecutionResult:
                 return ExecutionResult(
                     success=True,
                     tool="launch_application",
-                    message=f"Reused existing window for '{app_name}'."
+                    message=f"Reused existing window for '{app_name}'.",
+                    metadata={"reused_window": True}
                 )
     except Exception as e:
         logger.debug(f"Window enumeration failed: {e}")
@@ -568,7 +571,8 @@ def launch_application(args: dict[str, Any]) -> ExecutionResult:
         return ExecutionResult(
             success=True,
             tool="launch_application",
-            message=f"Application '{app_name}' is already running. Brought to foreground."
+            message=f"Reused existing process (PID {running_match_pid}) for '{app_name}'.",
+            metadata={"reused_window": True}
         )
 
     # Try default shortcut/registry resolution
