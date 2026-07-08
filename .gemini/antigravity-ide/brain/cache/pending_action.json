@@ -1,1 +1,0 @@
-{"id": "test", "created_at": 1783272407.8909962, "plan": {"steps": [{"tool": "open_browser", "args": {"url": "https://google.com"}}]}}
