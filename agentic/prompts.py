@@ -16,20 +16,34 @@ JSON OUTPUT FORMAT:
   "steps": [
     {{
       "tool": "tool_name",
-      "args": {{"arg_name": "arg_value"}}
+      "args": {{"arg_name": "arg_value"}},
+      "wait_for": "window_ready",
+      "timeout": 20,
+      "requires": "optional human-readable prerequisite label"
     }}
   ],
   "response": "A polite, concise response acknowledging the action. E.g. 'Opening Chrome and searching for machine learning.'"
 }}
+
+EXECUTION METADATA FIELDS (all optional):
+- wait_for: condition to wait for AFTER this step before executing the next one.
+  Valid values: "window_ready", "process_running", "window_exists", "window_active", "element_ready", "browser_loaded"
+- timeout: maximum seconds to wait (integer). Defaults apply if omitted.
+- requires: human-readable label of what this step depends on (logging/UI only).
 
 AVAILABLE TOOLS:
 {tools_json}
 
 RULES:
 1. Hierarchical Decomposition: Decompose user queries into fine-grained tasks. E.g. messaging a contact is not a single tool call; it requires focusing the window, searching the chat, typing text, and pressing enter.
-2. Argument extraction: Extract explicit entities from the text (e.g., website names, search queries). Do NOT hallucinate arguments not present in the user's request.
-3. Fallback: If the user's request cannot be fulfilled by ANY of the available tools, output exactly one step with `"tool": "resolve_and_open"` and the query argument set to the user's request.
-4. Confidence: Your `thought` should reflect your confidence. If the text is garbled, select the `resolve_and_open` tool.
+2. Complete Goal Fulfillment: Never stop planning after opening an application if the user requested an action inside it. Every plan must satisfy the user's final goal, not just the first action. If an application must be opened first, continue planning until the requested task is complete.
+3. No resolve_and_open Collapse: Do NOT collapse a compound or in-app request into a single generic "resolve_and_open" step. Never return only "resolve_and_open" for requests containing action verbs such as: play, search, find, type, send, open chat, compose, email, click, download, upload, search inside, navigate.
+4. Heuristic Inference: If parsing partially fails, infer the remaining obvious actions instead of falling back to a single open_resource or resolve_and_open step.
+5. Tool Preference: Prefer specialized tools (e.g., search_inside_application, perform_app_action, focus_window, type_text, press_key) over generic resolve_and_open whenever the user requested an in-app action.
+6. Application Launch: When launching or opening an application, ALWAYS add wait_for: "window_ready" and a reasonable timeout (15-25 seconds) on the launch step so the engine waits for the app to become ready before proceeding.
+7. Argument extraction: Extract explicit entities from the text (e.g., website names, search queries). Do NOT hallucinate arguments not present in the user's request.
+8. Fallback: If the user's request cannot be fulfilled by ANY of the available tools, output exactly one step with `"tool": "resolve_and_open"` and the query argument set to the user's request.
+9. Confidence: Your `thought` should reflect your confidence. If the text is garbled, select the `resolve_and_open` tool.
 """
 
 FEW_SHOT_EXAMPLES = [
@@ -40,19 +54,18 @@ FEW_SHOT_EXAMPLES = [
     {
         "role": "assistant",
         "content": """{
-  "thought": "User wants to open the browser and perform a web search.",
+  "thought": "User wants to open the browser and perform a web search. I launch Chrome and wait for its window to be ready before searching.",
   "steps": [
     {
       "tool": "launch_application",
-      "args": {"application": "chrome"}
-    },
-    {
-      "tool": "wait_for_window",
-      "args": {"target": "chrome"}
+      "args": {"application": "chrome"},
+      "wait_for": "ui_ready",
+      "timeout": 60
     },
     {
       "tool": "search_inside_application",
-      "args": {"query": "machine learning"}
+      "args": {"query": "machine learning"},
+      "requires": "Chrome Ready"
     }
   ],
   "response": "Opening Chrome and searching for machine learning."
@@ -68,12 +81,18 @@ FEW_SHOT_EXAMPLES = [
   "thought": "User wants to send a message on WhatsApp. I will focus the window, search for the contact, type the message, and send it.",
   "steps": [
     {
-      "tool": "focus_window",
-      "args": {"target": "WhatsApp"}
+      "tool": "launch_application",
+      "args": {"application": "whatsapp"},
+      "wait_for": "ui_ready",
+      "timeout": 60
     },
     {
       "tool": "search_inside_application",
       "args": {"query": "Harshita"}
+    },
+    {
+      "tool": "press_key",
+      "args": {"key": "enter"}
     },
     {
       "tool": "type_text",
@@ -94,18 +113,32 @@ FEW_SHOT_EXAMPLES = [
     {
         "role": "assistant",
         "content": """{
-  "thought": "User wants to play music on Spotify. I will focus the application, search for the song, and play it.",
+  "thought": "User wants to play a song on Spotify. I must launch the app and wait for it to fully load before searching, otherwise the search will fail on a blank window.",
   "steps": [
     {
-      "tool": "focus_window",
-      "args": {"target": "Spotify"}
+      "tool": "launch_application",
+      "args": {"application": "spotify"},
+      "wait_for": "ui_ready",
+      "timeout": 60,
+      "requires": null
     },
     {
       "tool": "search_inside_application",
-      "args": {"query": "Believer"}
+      "args": {"query": "Believer"},
+      "wait_for": "element_ready",
+      "timeout": 10,
+      "requires": "Spotify Ready"
+    },
+    {
+      "tool": "press_key",
+      "args": {"key": "enter"}
+    },
+    {
+      "tool": "perform_app_action",
+      "args": {"action": "play"}
     }
   ],
-  "response": "Playing Believer on Spotify."
+  "response": "Launching Spotify and playing Believer."
 }"""
     },
     {

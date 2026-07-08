@@ -12,7 +12,7 @@ import logging
 from flask import Blueprint, request, jsonify, Response, stream_with_context
 
 from web.services import run_pipeline, get_health
-from web.stream_service import run_pipeline_stream
+from web.stream_service import run_pipeline_stream, run_confirmation_stream
 from web.confirm_service import handle_confirm, get_pending_confirmation
 from storage.history_manager import load_all, load_one, remove
 
@@ -149,13 +149,15 @@ def confirm():
     Request body:
         {
             "confirmation_id": "<uuid>",
-            "decision": "proceed" | "cancel"
+            "decision": "proceed" | "cancel",
+            "edited_steps": [...]
         }
     """
     data = request.get_json(silent=True) or {}
 
     confirmation_id = data.get("confirmation_id")
     decision = data.get("decision")
+    edited_steps = data.get("edited_steps")
 
     if not confirmation_id:
         return jsonify({"success": False, "message": "Missing confirmation_id."}), 400
@@ -163,8 +165,34 @@ def confirm():
         return jsonify({"success": False, "message": "Decision must be 'proceed' or 'cancel'."}), 400
 
     try:
-        result = handle_confirm(confirmation_id, decision)
-        return jsonify(result), 200
+        # Check if client accepts text/event-stream or has explicitly requested streaming
+        wants_stream = (
+            request.args.get("stream") == "true" or
+            "text/event-stream" in request.headers.get("Accept", "")
+        )
+
+        if decision == "cancel" or not wants_stream:
+            result = handle_confirm(confirmation_id, decision, edited_steps)
+            return jsonify(result), 200
+
+        # Stream execution progress for proceed decision when streaming is desired
+        def generate():
+            try:
+                yield from run_confirmation_stream(confirmation_id, edited_steps)
+            except Exception as exc:
+                logger.exception("Streaming execution error")
+                import json
+                yield f'data: {{"stage":"done","status":"error","message":{json.dumps(str(exc))}}}\n\n'
+
+        return Response(
+            stream_with_context(generate()),
+            mimetype="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                "Connection": "keep-alive",
+            },
+        )
     except Exception as e:
         logger.exception("Confirmation error")
         return jsonify({"success": False, "message": str(e)}), 500
@@ -179,4 +207,39 @@ def pending():
     """
     confirmation = get_pending_confirmation()
     return jsonify({"confirmation": confirmation})
+
+
+@api.route("/permissions/check", methods=["POST"])
+def permissions_check():
+    """Verify check status of specified permissions."""
+    data = request.get_json(silent=True) or {}
+    permissions = data.get("permissions", [])
+    from agentic.permissions_check import check_all_required_permissions
+    results = check_all_required_permissions(permissions)
+    return jsonify({"success": True, "granted": results})
+
+
+@api.route("/permissions/grant", methods=["POST"])
+def permissions_grant():
+    """Trigger OS-level grant dialog or settings page for a permission."""
+    data = request.get_json(silent=True) or {}
+    permission = data.get("permission")
+    if not permission:
+        return jsonify({"success": False, "error": "Missing permission name"}), 400
+    from agentic.permissions_check import grant_os_permission
+    success = grant_os_permission(permission)
+    return jsonify({"success": success, "permission": permission})
+
+
+@api.route("/permissions/mock", methods=["POST"])
+def permissions_mock():
+    """Allow mock setting of system permissions for validation/testing flows."""
+    data = request.get_json(silent=True) or {}
+    permission = data.get("permission")
+    granted = data.get("granted", True)
+    if not permission:
+        return jsonify({"success": False, "error": "Missing permission name"}), 400
+    from agentic.permissions_check import set_mock_permission
+    set_mock_permission(permission, granted)
+    return jsonify({"success": True, "permission": permission, "granted": granted})
 

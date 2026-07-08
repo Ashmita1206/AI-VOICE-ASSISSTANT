@@ -84,6 +84,37 @@ _REGISTRY: list[IntentDefinition] = [
         entity_schema={},
     ),
 
+    IntentDefinition(
+        name="play_music",
+        category="media",
+        description="Play a song, artist, or playlist on Spotify or another music player.",
+        patterns=[
+            IntentPattern("play {query} on {application}"),
+            IntentPattern("play {query} in {application}"),
+            IntentPattern("play {query}"),
+            IntentPattern("play song {query}"),
+            IntentPattern("search {query} on {application}"),
+            IntentPattern("search {query} in {application}"),
+        ],
+        keywords=["play", "music", "song", "spotify", "sing", "audio"],
+        entity_schema={"query": "str", "application": "str"},
+    ),
+    IntentDefinition(
+        name="send_message",
+        category="communication",
+        description="Send a chat message or text to a contact via WhatsApp or another messenger.",
+        patterns=[
+            IntentPattern("send message to {contact} saying {message}"),
+            IntentPattern("send {message} to {contact}"),
+            IntentPattern("message {contact} and write {message}"),
+            IntentPattern("message {contact} saying {message}"),
+            IntentPattern("message {contact} {message}"),
+            IntentPattern("text {contact} {message}"),
+        ],
+        keywords=["message", "whatsapp", "send", "text", "write", "chat"],
+        entity_schema={"contact": "str", "message": "str"},
+    ),
+
     # ──────────────────────────────────────────────────────────────────
     # BROWSER & WEB COMMANDS
     # ──────────────────────────────────────────────────────────────────

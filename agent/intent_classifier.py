@@ -117,6 +117,14 @@ class IntentClassifier:
         if best_overall.intent == "open_application" and "website" in best_overall.entities:
             best_overall = replace(best_overall, intent="open_website")
 
+        # Re-resolve intent based on application target (e.g. search on Spotify -> play_music)
+        if best_overall.intent in ("search_web", "open_application") and "application" in best_overall.entities:
+            app_val = best_overall.entities["application"].lower().strip()
+            if "spotify" in app_val:
+                best_overall = replace(best_overall, intent="play_music")
+            elif "whatsapp" in app_val:
+                best_overall = replace(best_overall, intent="send_message")
+
         return best_overall
 
     def rank_intents(self, text: str) -> list[dict[str, Any]]:

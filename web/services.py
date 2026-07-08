@@ -345,6 +345,7 @@ def _generate_tts_file(text: str) -> str | None:
             volume="+0%",
         )
         asyncio.run(communicate.save(filepath))
+        logger.info("Audio Generated: %s", filepath)
         return filepath
     except Exception as edge_err:
         logger.warning(f"Edge TTS file generation failed, trying pyttsx3 fallback: {edge_err}")
@@ -358,6 +359,7 @@ def _generate_tts_file(text: str) -> str | None:
         wav_filepath = os.path.join(audio_dir, wav_filename)
         engine.save_to_file(text, wav_filepath)
         engine.runAndWait()
+        logger.info("Audio Generated: %s", wav_filepath)
         return wav_filepath
     except Exception as pyttsx_err:
         logger.error(f"TTS file generation failed for both edge-tts and pyttsx3: {pyttsx_err}")

@@ -83,8 +83,89 @@ def test_fallback_heuristic_open_browser_search():
     assert len(plan.steps) == 2
     
     # Check open_browser step
-    assert plan.steps[0].tool == "open_browser"
+    assert plan.steps[0].tool == "launch_application"
+    assert plan.steps[0].args["application"] == "chrome"
+    assert plan.steps[0].wait_for == "ui_ready"
+    assert plan.steps[0].timeout == 60
     
-    # Check search_web step & query extraction
-    assert plan.steps[1].tool == "search_web"
+    # Check focus window
+    # Check search step & query extraction
+    assert plan.steps[1].tool == "search_inside_application"
     assert plan.steps[1].args["query"] == "machine learning and aiml"
+
+def test_fallback_heuristic_whatsapp():
+    """Test WhatsApp sequence."""
+    text = "send hi to Harshita on whatsapp"
+    plan = apply_heuristic_fallback(text)
+    assert plan.intent == "send_whatsapp"
+    assert len(plan.steps) == 5
+    assert plan.steps[0].tool == "launch_application"
+    assert plan.steps[0].wait_for == "ui_ready"
+    assert plan.steps[0].timeout == 60
+    assert plan.steps[1].tool == "search_inside_application"
+    assert plan.steps[1].args["query"] == "Harshita"
+    assert plan.steps[2].tool == "press_key"
+    assert plan.steps[3].tool == "type_text"
+    assert plan.steps[3].args["text"] == "hi"
+    assert plan.steps[4].tool == "press_key"
+
+def test_fallback_heuristic_spotify():
+    """Test Spotify sequence."""
+    text = "play Believer on spotify"
+    plan = apply_heuristic_fallback(text)
+    assert plan.intent == "play_music"
+    assert len(plan.steps) == 4
+    assert plan.steps[0].tool == "launch_application"
+    assert plan.steps[0].wait_for == "ui_ready"
+    assert plan.steps[0].timeout == 60
+    assert plan.steps[1].tool == "search_inside_application"
+    assert plan.steps[1].args["query"] == "believer"
+    assert plan.steps[2].tool == "press_key"
+    assert plan.steps[2].args["key"] == "enter"
+    assert plan.steps[3].tool == "press_key"
+    assert plan.steps[3].args["key"] == "enter"
+
+def test_fallback_heuristic_spotify_open_and_play():
+    """Test Open Spotify and play Believer command."""
+    text = "Open Spotify and play Believer"
+    plan = apply_heuristic_fallback(text)
+    assert plan.intent == "play_music"
+    assert any(step.tool == "search_inside_application" for step in plan.steps)
+    search_step = [step for step in plan.steps if step.tool == "search_inside_application"][0]
+    assert search_step.args["query"] == "believer"
+
+def test_fallback_heuristic_play_shape_of_you():
+    """Test Play Shape of You command."""
+    text = "Play Shape of You"
+    plan = apply_heuristic_fallback(text)
+    assert plan.intent == "play_music"
+    assert any(step.tool == "search_inside_application" for step in plan.steps)
+    search_step = [step for step in plan.steps if step.tool == "search_inside_application"][0]
+    assert search_step.args["query"] == "shape of you"
+
+def test_fallback_heuristic_spotify_play_kesariya():
+    """Test Spotify play Kesariya command."""
+    text = "Spotify play Kesariya"
+    plan = apply_heuristic_fallback(text)
+    assert plan.intent == "play_music"
+    assert any(step.tool == "search_inside_application" for step in plan.steps)
+    search_step = [step for step in plan.steps if step.tool == "search_inside_application"][0]
+    assert search_step.args["query"] == "kesariya"
+
+def test_fallback_heuristic_play_khat():
+    """Test Play Khat command."""
+    text = "Play Khat"
+    plan = apply_heuristic_fallback(text)
+    assert plan.intent == "play_music"
+    assert any(step.tool == "search_inside_application" for step in plan.steps)
+    search_step = [step for step in plan.steps if step.tool == "search_inside_application"][0]
+    assert search_step.args["query"] == "khat"
+
+def test_fallback_heuristic_play_until_i_found_you():
+    """Test Play Until I Found You command."""
+    text = "Play Until I Found You"
+    plan = apply_heuristic_fallback(text)
+    assert plan.intent == "play_music"
+    assert any(step.tool == "search_inside_application" for step in plan.steps)
+    search_step = [step for step in plan.steps if step.tool == "search_inside_application"][0]
+    assert search_step.args["query"] == "until i found you"

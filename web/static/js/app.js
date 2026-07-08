@@ -17,6 +17,115 @@ let confirmationCountdown = 60;
 // ── SSE abort controller ─────────────────────────────────────────────
 let activeStreamController = null;
 
+// ── FSM & Audio states ──────────────────────────────────────────────
+const FSM_STATES = {
+  IDLE:                     'Idle',
+  LISTENING:                'Listening',
+  TRANSCRIBING:             'Transcribing',
+  UNDERSTANDING:            'Understanding',
+  PLANNING:                 'Planning',
+  WAITING_FOR_CONFIRMATION: 'Awaiting Confirmation',
+  EXECUTING:                'Executing',
+  VERIFYING:                'Verifying',
+  COMPLETED:                'Completed',
+  FAILED:                   'Failed'
+};
+
+let lastAudioBlob = null;
+let popupAutoCloseTimer = null;
+let fsmIdleTimer = null;
+
+// Silent audio data URI to unlock audio on first interaction
+const SILENCE_SRC = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAAA';
+let isAudioUnlocked = false;
+
+function unlockAudio() {
+  if (isAudioUnlocked) return;
+  const audioEl = document.getElementById('audio-player');
+  if (audioEl) {
+    const originalSrc = audioEl.src;
+    audioEl.src = SILENCE_SRC;
+    audioEl.play()
+      .then(() => {
+        audioEl.pause();
+        audioEl.src = originalSrc;
+        isAudioUnlocked = true;
+        console.log("[AUDIO] Audio player successfully unlocked.");
+      })
+      .catch(err => {
+        console.log("[AUDIO] Audio player unlock pending gesture:", err);
+      });
+  }
+}
+
+function transitionTo(state) {
+  const container = document.getElementById('fsm-status-container');
+  const badge     = document.getElementById('fsm-state-badge');
+  if (!container || badge === null) return;
+
+  console.log(`[FSM] → ${state}`);
+  container.style.display = 'flex';
+  badge.textContent = state;
+
+  // Reset styles first
+  badge.style.backgroundColor = '';
+  badge.style.color = '#FFF';
+
+  if (state === FSM_STATES.IDLE) {
+    console.log("Returned to idle");
+    badge.style.backgroundColor = '#6c757d'; // Grey
+  } else if (state === FSM_STATES.LISTENING) {
+    badge.style.backgroundColor = '#dc2626'; // Red
+  } else if (state === FSM_STATES.TRANSCRIBING) {
+    badge.style.backgroundColor = '#0891b2'; // Cyan
+  } else if (state === FSM_STATES.UNDERSTANDING) {
+    badge.style.backgroundColor = '#2563eb'; // Blue
+  } else if (state === FSM_STATES.PLANNING) {
+    badge.style.backgroundColor = '#7c3aed'; // Indigo
+  } else if (state === FSM_STATES.WAITING_FOR_CONFIRMATION) {
+    badge.style.backgroundColor = '#d97706'; // Amber
+  } else if (state === FSM_STATES.EXECUTING) {
+    badge.style.backgroundColor = '#9333ea'; // Purple
+  } else if (state === FSM_STATES.VERIFYING) {
+    badge.style.backgroundColor = '#0284c7'; // Light Blue
+  } else if (state === FSM_STATES.COMPLETED) {
+    badge.style.backgroundColor = '#16a34a'; // Green
+  } else if (state === FSM_STATES.FAILED) {
+    badge.style.backgroundColor = '#dc2626'; // Red
+  }
+}
+
+
+function validatePlanFrontend(confirmation) {
+  const errors = [];
+  
+  if (!confirmation) {
+    errors.push("Confirmation object is missing.");
+    return { valid: false, errors };
+  }
+  
+  if (!confirmation.plan) {
+    errors.push("Execution plan is missing.");
+    return { valid: false, errors };
+  }
+  
+  const steps = confirmation.plan.steps || [];
+  if (steps.length === 0) {
+    errors.push("Plan contains no executable steps.");
+  }
+  
+  steps.forEach((step, idx) => {
+    if (!step.tool) {
+      errors.push(`Step ${idx + 1} is missing a tool.`);
+    }
+  });
+  
+  return {
+    valid: errors.length === 0,
+    errors
+  };
+}
+
 // ── DOM refs ─────────────────────────────────────────────────────────
 const micBtn      = document.getElementById('mic-btn');
 const uploadInput = document.getElementById('upload-input');
@@ -37,6 +146,8 @@ const sections = [
 // ══════════════════════════════════════════════════════════════════════
 
 micBtn.addEventListener('click', async () => {
+  console.log("Record clicked");
+  unlockAudio();
   if (isRecording) {
     stopRecording();
   } else {
@@ -52,7 +163,9 @@ async function startRecording() {
 
     mediaRecorder.ondataavailable = e => { if (e.data.size > 0) audioChunks.push(e.data); };
     mediaRecorder.onstop = () => {
+      console.log("Voice captured");
       const blob = new Blob(audioChunks, { type: 'audio/webm' });
+      lastAudioBlob = blob;
       showMicStatus('captured', 'Audio Captured');
       sendAudio(blob, 'recording.webm');
       stream.getTracks().forEach(t => t.stop());
@@ -64,6 +177,7 @@ async function startRecording() {
     micBtn.classList.add('recording');
     statusText.textContent = '';
     showMicStatus('listening', 'Listening...');
+    transitionTo(FSM_STATES.LISTENING);
     resetUI(/* keepMicStatus */ true);
 
   } catch (err) {
@@ -83,6 +197,8 @@ function stopRecording() {
 uploadInput.addEventListener('change', e => {
   const file = e.target.files[0];
   if (file) {
+    unlockAudio();
+    lastAudioBlob = file;
     resetUI();
     showMicStatus('captured', 'Audio Captured');
     sendAudio(file, file.name);
@@ -101,13 +217,28 @@ function resetUI(keepMicStatus = false) {
     activeStreamController = null;
   }
 
+  // Close any active confirmation card
+  hideConfirmationCard();
+  
+  // Close any active completion popup
+  hideCompletionPopup();
+
   hideAllSections();
 
   if (!keepMicStatus) clearMicStatus();
 
   const execDiv = document.getElementById('execution-val');
   if (execDiv) execDiv.innerHTML = '';
+
+  // Reset audio player
+  const audioEl = document.getElementById('audio-player');
+  if (audioEl) {
+    audioEl.pause();
+    audioEl.src = '';
+    audioEl.style.display = 'none';
+  }
 }
+
 
 function hideAllSections() {
   sections.forEach(id => {
@@ -199,6 +330,7 @@ function clearMicStatus() {
 
 async function sendAudio(blob, filename) {
   statusText.textContent = '';
+  transitionTo(FSM_STATES.PROCESSING);
 
   const formData = new FormData();
   formData.append('audio', blob, filename);
@@ -260,6 +392,7 @@ async function consumeSSEStream(body) {
 // ══════════════════════════════════════════════════════════════════════
 
 function handleSSEEvent(event) {
+  console.log("[FRONTEND] Received JSON:", event);
   const { stage, status, data, message } = event;
 
   switch (stage) {
@@ -267,20 +400,37 @@ function handleSSEEvent(event) {
     // ── Transcript ──────────────────────────────────────────────────
     case 'transcript': {
       if (status === 'processing') {
+        transitionTo(FSM_STATES.TRANSCRIBING);
         revealSection('sec-transcript');
         setSectionState('sec-transcript', 'processing');
         showProcessingHint('sec-transcript', 'Transcribing audio…');
         statusText.textContent = 'Transcribing…';
 
       } else if (status === 'completed') {
+        console.log('Speech recognition completed');
         clearProcessingHint('sec-transcript');
         setSectionState('sec-transcript', 'completed');
-        populateTranscript(data);
+        // Populate transcript text and metrics
+        const transcriptEl = document.getElementById('transcript-val');
+        if (transcriptEl && data) {
+          transcriptEl.textContent = data.text || '';
+          console.log('Transcript updated: ' + (data.text || ''));
+        }
+        // Populate accuracy metrics
+        if (data && data.stt) {
+          const s = data.stt;
+          const modelEl = document.getElementById('met-model');
+          const confEl  = document.getElementById('met-conf');
+          const timeEl  = document.getElementById('met-time');
+          if (modelEl) modelEl.textContent = s.model || '—';
+          if (confEl)  confEl.textContent  = s.confidence != null ? s.confidence + '%' : '—';
+          if (timeEl)  timeEl.textContent  = s.processing_time_ms != null ? s.processing_time_ms + ' ms' : '—';
+        }
         revealSection('sec-transcript');
-        
         revealSection('sec-accuracy');
         setSectionState('sec-accuracy', 'completed');
         statusText.textContent = 'Transcript ready';
+        transitionTo(FSM_STATES.UNDERSTANDING);
       }
       break;
     }
@@ -288,18 +438,21 @@ function handleSSEEvent(event) {
     // ── Intent ──────────────────────────────────────────────────────
     case 'intent': {
       if (status === 'processing') {
+        transitionTo(FSM_STATES.UNDERSTANDING);
         revealSection('sec-intent');
         setSectionState('sec-intent', 'processing');
         showProcessingHint('sec-intent', 'Detecting intent…');
         statusText.textContent = 'Detecting intent…';
 
       } else if (status === 'completed') {
+        console.log('Intent detected: ' + (data?.name || 'unknown'));
         clearProcessingHint('sec-intent');
         setSectionState('sec-intent', 'completed');
         const intentName = data.name || 'unknown';
         document.getElementById('intent-val').textContent = intentName;
         revealSection('sec-intent');
         statusText.textContent = 'Intent: ' + intentName;
+        transitionTo(FSM_STATES.PLANNING);
       }
       break;
     }
@@ -315,7 +468,18 @@ function handleSSEEvent(event) {
       } else if (status === 'completed') {
         clearProcessingHint('sec-entities');
         setSectionState('sec-entities', 'completed');
-        populateEntities(data.entities);
+        // Render entities as key–value chips
+        const entitiesEl = document.getElementById('entities-val');
+        if (entitiesEl && data && data.entities) {
+          const entries = Object.entries(data.entities);
+          if (entries.length > 0) {
+            entitiesEl.innerHTML = entries.map(([k, v]) =>
+              `<span class="entity-chip"><strong>${escapeHtml(k)}:</strong> ${escapeHtml(String(v))}</span>`
+            ).join('');
+          } else {
+            entitiesEl.textContent = 'None detected';
+          }
+        }
         revealSection('sec-entities');
         statusText.textContent = 'Entities extracted';
       }
@@ -335,12 +499,15 @@ function handleSSEEvent(event) {
     // ── Planner ─────────────────────────────────────────────────────
     case 'planner': {
       if (status === 'processing') {
+        transitionTo(FSM_STATES.PLANNING);
         revealSection('sec-planner');
         setSectionState('sec-planner', 'processing');
         showProcessingHint('sec-planner', 'Building execution plan…');
         statusText.textContent = 'Planning…';
+        console.log('Planner generating…');
 
       } else if (status === 'completed') {
+        console.log('Planner generated');
         clearProcessingHint('sec-planner');
         setSectionState('sec-planner', 'completed');
         document.getElementById('planner-val').innerHTML = syntaxHighlight(
@@ -348,6 +515,12 @@ function handleSSEEvent(event) {
         );
         revealSection('sec-planner');
         statusText.textContent = 'Plan ready';
+        // Stay in PLANNING until confirmation is shown
+      } else if (status === 'failed') {
+        clearProcessingHint('sec-planner');
+        setSectionState('sec-planner', 'failed');
+        statusText.textContent = 'Planning failed.';
+        transitionTo(FSM_STATES.IDLE);
       }
       break;
     }
@@ -359,20 +532,39 @@ function handleSSEEvent(event) {
         setSectionState('sec-execution', 'processing');
         appendExecLogRow(message || '…', 'running');
         statusText.textContent = message || 'Executing…';
+        
+        if (message && message.includes("Starting execution")) {
+          console.log("Execution Started");
+        }
+        
+        if (message && message.includes("Verifying")) {
+          transitionTo(FSM_STATES.VERIFYING);
+        } else {
+          transitionTo(FSM_STATES.EXECUTING);
+        }
+        console.log('Executing: ' + (message || '…'));
 
       } else if (status === 'completed') {
+        console.log('Execution finished');
         setSectionState('sec-execution', 'completed');
         finaliseExecLog(data?.steps);
-        statusText.textContent = 'Execution complete';
+        // Show completion result row
+        appendExecLogRow('Execution Completed ✓', 'success');
+        statusText.textContent = 'Execution complete ✓';
+        // FSM transition and completion popup are driven by 'done' event at the end
 
       } else if (status === 'requires_confirmation') {
         setSectionState('sec-execution', 'completed');
         appendExecLogRow(message || 'Awaiting confirmation…', 'confirm');
         revealSection('sec-execution');
+        transitionTo(FSM_STATES.WAITING_FOR_CONFIRMATION);
 
       } else if (status === 'failed') {
+        console.log('Execution failed: ' + (message || ''));
         setSectionState('sec-execution', 'failed');
-        appendExecLogRow(message || 'Execution failed', 'failure');
+        appendExecLogRow('Execution Failed — ' + (message || 'Unknown error'), 'failure');
+        statusText.textContent = 'Execution failed.';
+        // FSM transition and completion popup are driven by 'done' event at the end
       }
       break;
     }
@@ -388,7 +580,26 @@ function handleSSEEvent(event) {
       } else if (status === 'completed') {
         clearProcessingHint('sec-response');
         setSectionState('sec-response', 'completed');
-        populateResponse(data);
+        // Render response text and optional audio player
+        const respEl    = document.getElementById('response-text');
+        const audioEl   = document.getElementById('audio-player');
+        if (respEl && data) {
+          respEl.textContent = data.text || '';
+        }
+        if (audioEl && data && data.audio_url) {
+          audioEl.src = data.audio_url;
+          audioEl.style.display = 'block';
+          audioEl.load();
+          
+          console.log("[AUDIO] Playing TTS response...");
+          audioEl.play()
+            .then(() => {
+              // Note: console log "Audio Playback Started" is handled by event listener
+            })
+            .catch(err => {
+              console.error("Playback Failed", err);
+            });
+        }
         revealSection('sec-response');
       }
       break;
@@ -398,22 +609,40 @@ function handleSSEEvent(event) {
     case 'done': {
       if (status === 'success') {
         clearMicStatus();
-        statusText.textContent = 'Complete.';
+        statusText.textContent = 'Successfully executed all planned actions.';
+        console.log("Execution Finished");
+        
+        // Audit execution results to determine overall success/failure
+        const executionSteps = data && data.execution ? data.execution : [];
+        const taskSuccess = executionSteps.every(step => step.success !== false);
+        
+        if (taskSuccess) {
+          transitionTo(FSM_STATES.COMPLETED);
+          showCompletionPopup(data, true);
+        } else {
+          transitionTo(FSM_STATES.FAILED);
+          showCompletionPopup(data, false);
+        }
 
       } else if (status === 'no_speech') {
-        statusText.textContent = 'No speech detected.';
-        populateResponse(data?.speech || { text: "I didn't catch that. Could you try again?" });
+        statusText.textContent = 'No speech detected. Please try again.';
+        // Show response section with fallback message
+        const respEl = document.getElementById('response-text');
+        const speech = data?.speech || { text: "I didn't catch that. Could you try again?" };
+        if (respEl) respEl.textContent = speech.text || '';
         revealSection('sec-response');
         setSectionState('sec-response', 'completed');
         clearMicStatus();
+        transitionTo(FSM_STATES.IDLE);
 
       } else if (status === 'requires_confirmation') {
-        statusText.textContent = 'Awaiting confirmation…';
+        console.log('Waiting for confirmation');
+        statusText.textContent = 'Awaiting your confirmation…';
+        transitionTo(FSM_STATES.WAITING_FOR_CONFIRMATION);
         renderConfirmationCard(data.confirmation);
 
       } else if (status === 'error') {
         statusText.textContent = 'Error: ' + (message || 'Unknown error');
-        // Set all processing sections to failed
         sections.forEach(id => {
           const el = document.getElementById(id);
           if (el && el.classList.contains('processing')) {
@@ -422,7 +651,26 @@ function handleSSEEvent(event) {
           }
         });
         clearMicStatus();
+        console.log("Execution Finished");
+        transitionTo(FSM_STATES.FAILED);
+        showCompletionPopup({ error: message || 'Unknown error' }, false);
+
+        if (data && data.success === false && data.error) {
+          renderConfirmationCard({
+            id: null,
+            message: "❌ Unable to generate a valid execution plan.",
+            error: data.error,
+            plan: null,
+            permissions: null,
+            remaining_seconds: 0
+          });
+        }
       }
+      break;
+    }
+    
+    default: {
+      console.warn("Any missing event", stage, event);
       break;
     }
   }
@@ -485,125 +733,8 @@ function finaliseExecLog(steps) {
     }
   });
 
-  // Final completion row
-  appendExecLogRow('Execution completed', 'success');
-}
 
-// ══════════════════════════════════════════════════════════════════════
-// Populate helpers
-// ══════════════════════════════════════════════════════════════════════
-
-function populateTranscript(data) {
-  document.getElementById('transcript-val').textContent =
-    data.text || 'No speech detected.';
-
-  if (data.stt) {
-    document.getElementById('met-model').textContent =
-      (data.stt.model || '').split('/').pop();
-    document.getElementById('met-conf').textContent =
-      data.stt.confidence + '%';
-    document.getElementById('met-time').textContent =
-      data.stt.processing_time_ms + 'ms';
-  }
-}
-
-function populateEntities(entities) {
-  const entGrid = document.getElementById('entities-val');
-  entGrid.innerHTML = '';
-  if (entities && Object.keys(entities).length > 0) {
-    for (const [k, v] of Object.entries(entities)) {
-      entGrid.innerHTML +=
-        `<span class="entity-k">${escapeHtml(k)}</span>` +
-        `<span class="entity-v">${escapeHtml(String(v))}</span>`;
-    }
-  } else {
-    entGrid.innerHTML =
-      `<span class="entity-k">none</span><span class="entity-v">-</span>`;
-  }
-}
-
-function populateResponse(data) {
-  if (!data) return;
-  const text = data.text || '';
-  document.getElementById('response-text').textContent = text;
-  const player = document.getElementById('audio-player');
-  if (data.audio_url) {
-    player.src = data.audio_url;
-    player.style.display = 'block';
-    setTimeout(() => player.play().catch(() => { }), 300);
-  } else {
-    player.style.display = 'none';
-  }
-}
-
-// ══════════════════════════════════════════════════════════════════════
-// Full-data populate (used by confirmation resume + legacy path)
-// ══════════════════════════════════════════════════════════════════════
-
-function populateData(data) {
-  // Transcript
-  document.getElementById('transcript-val').textContent =
-    data.transcription || 'No speech detected.';
-
-  // Accuracy
-  if (data.stt) {
-    document.getElementById('met-model').textContent =
-      (data.stt.model || '').split('/').pop();
-    document.getElementById('met-conf').textContent =
-      data.stt.confidence + '%';
-    document.getElementById('met-time').textContent =
-      data.stt.processing_time_ms + 'ms';
-  }
-
-  // Intent
-  document.getElementById('intent-val').textContent =
-    data.intent ? data.intent.name : 'unknown';
-
-  // Entities
-  populateEntities(data.entities);
-
-  // Planner
-  document.getElementById('planner-val').innerHTML =
-    syntaxHighlight(JSON.stringify(data.planner || {}, null, 2));
-
-  // Execution
-  const execDiv = document.getElementById('execution-val');
-  execDiv.innerHTML = '';
-  if (data.execution && data.execution.length > 0) {
-    data.execution.forEach(step => {
-      const type = step.success ? 'success' : 'failure';
-      const icon = step.success ? '✓' : '✗';
-      const row = document.createElement('div');
-      row.className = 'exec-log-row';
-      row.innerHTML =
-        `<span class="exec-log-icon">${icon}</span>` +
-        `<span class="exec-log-text ${type}">` +
-        `${escapeHtml(step.tool || 'unknown')}: ${escapeHtml(step.message || '')}` +
-        `</span>`;
-      execDiv.appendChild(row);
-    });
-  } else {
-    execDiv.textContent = 'No actions executed.';
-  }
-
-  // Response
-  if (data.speech) {
-    populateResponse(data.speech);
-    const player = document.getElementById('audio-player');
-    if (data.speech.audio_url) {
-      setTimeout(() => player.play().catch(() => console.log('Autoplay blocked')), 2100);
-    }
-  }
-}
-
-function revealSequentially() {
-  let delay = 0;
-  sections.forEach(id => {
-    setTimeout(() => {
-      document.getElementById(id).classList.add('visible');
-    }, delay);
-    delay += 300;
-  });
+  // Final completion row — all steps done
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -611,75 +742,242 @@ function revealSequentially() {
 // ══════════════════════════════════════════════════════════════════════
 
 function renderConfirmationCard(confirmation) {
+  console.log("Showing confirmation");
   const card       = document.getElementById('confirmation-card');
   const messageEl  = document.getElementById('confirm-message');
   const detailsEl  = document.getElementById('confirm-details');
+  const editTextarea = document.getElementById('confirm-edit-textarea');
   const proceedBtn = document.getElementById('btn-proceed');
   const cancelBtn  = document.getElementById('btn-cancel');
+  const editBtn    = document.getElementById('btn-edit');
 
   activeConfirmationId = confirmation.id;
-  messageEl.textContent  = confirmation.message;
-  detailsEl.innerHTML    = buildConfirmDetails(confirmation);
-  proceedBtn.textContent = getConfirmButtonLabel(confirmation.tool);
-  cancelBtn.textContent  = 'Cancel';
 
+  const hasBackendError = !!confirmation.error;
+  const validation = hasBackendError ? { valid: false, errors: [confirmation.error] } : validatePlanFrontend(confirmation);
+  const proceedEnabled = !hasBackendError && validation.valid && confirmation.plan && confirmation.plan.steps.length > 0;
+
+  // Print FSM / Validation logs
+  console.log("-------------------------------------------------");
+  console.log("[FRONTEND PLAN VALIDATION LOGS]");
+  console.log("Planner Output:", confirmation ? confirmation.plan : null);
+  console.log("Validated Plan:", validation.valid);
+  console.log("Steps Count:", (confirmation && confirmation.plan && confirmation.plan.steps) ? confirmation.plan.steps.length : 0);
+  console.log("Proceed Enabled =", proceedEnabled);
+  if (!proceedEnabled) {
+    console.log("Reason if false:", validation.errors.join(", "));
+  }
+  console.log("-------------------------------------------------");
+
+  // Transition to Waiting for User Confirmation state
+  transitionTo(FSM_STATES.APPROVAL);
+
+  detailsEl.style.display = '';
+  editTextarea.style.display = 'none';
   card.style.display = '';
   card.classList.remove('fading-out');
 
-  const remaining = confirmation.remaining_seconds || 60;
-  startConfirmationTimer(remaining);
-  attachConfirmationListeners();
+  // Clone nodes to purge old listeners
+  const newProceed = proceedBtn.cloneNode(true);
+  const newCancel  = cancelBtn.cloneNode(true);
+  const newEdit    = editBtn.cloneNode(true);
+  proceedBtn.parentNode.replaceChild(newProceed, proceedBtn);
+  cancelBtn.parentNode.replaceChild(newCancel, cancelBtn);
+  editBtn.parentNode.replaceChild(newEdit, editBtn);
+
+  if (!proceedEnabled) {
+    // Show validation failure UI
+    messageEl.innerHTML = `<span style="color: #dc2626;">❌ Unable to generate a valid execution plan.</span>`;
+    
+    let errHtml = `<div class="confirm-error-reason" style="color: #dc2626; font-weight: bold; margin-bottom: 12px; font-size: 14px;">
+      Reason:<br>
+      <span style="font-weight: normal; color: var(--text);">${escapeHtml(validation.errors.join("<br>"))}</span>
+    </div>`;
+    detailsEl.innerHTML = errHtml;
+
+    // Proceed button rules: hide Proceed
+    newProceed.style.display = 'none';
+
+    // Set Retry button
+    newEdit.textContent = 'Retry';
+    newEdit.style.backgroundColor = '#2563eb'; // blue
+    newEdit.style.color = '#fff';
+    newEdit.disabled = false;
+    newEdit.style.opacity = '1';
+
+    newCancel.textContent = 'Cancel';
+    newCancel.disabled = false;
+    newCancel.style.opacity = '1';
+
+    // Hook listeners
+    newEdit.addEventListener('click', () => {
+      hideConfirmationCard();
+      if (lastAudioBlob) {
+        statusText.textContent = 'Retrying planning...';
+        sendAudio(lastAudioBlob, 'recording.webm');
+      } else {
+        statusText.textContent = 'No recorded audio available to retry. Please record audio again.';
+      }
+    });
+
+    newCancel.addEventListener('click', () => {
+      hideConfirmationCard();
+      transitionTo(FSM_STATES.CANCELLED);
+      statusText.textContent = 'Cancelled.';
+      setTimeout(() => transitionTo(FSM_STATES.IDLE), 2000);
+    });
+
+  } else {
+    // Proceed enabled UI: Ask for USER CONFIRMATION only
+    messageEl.innerHTML = `<strong>Confirm Task Execution</strong>`;
+    
+    if (!confirmation.task_description) {
+      const match = (confirmation.message || "").match(/'([^']+)'/);
+      confirmation.task_description = match ? match[1] : (confirmation.message || "Execute user request");
+    }
+
+    detailsEl.innerHTML = buildConfirmDetails(confirmation);
+
+    newProceed.style.display = 'inline-block';
+    newProceed.textContent = 'Proceed';
+    newProceed.disabled = false;
+    newProceed.style.opacity = '1';
+
+    newCancel.textContent = 'Cancel';
+    newCancel.disabled = false;
+    newCancel.style.opacity = '1';
+
+    newEdit.textContent = 'Edit Plan';
+    newEdit.style.backgroundColor = '#6c757d';
+    newEdit.disabled = false;
+    newEdit.style.opacity = '1';
+
+    const remaining = confirmation.remaining_seconds || 60;
+    startConfirmationTimer(remaining);
+
+    let isEditing = false;
+    let currentSteps = confirmation.plan ? (confirmation.plan.steps || []) : [];
+
+    newEdit.addEventListener('click', () => {
+      if (!isEditing) {
+        isEditing = true;
+        detailsEl.style.display = 'none';
+        editTextarea.value = JSON.stringify(currentSteps, null, 2);
+        editTextarea.style.display = '';
+        newEdit.textContent = 'Save Plan';
+        newEdit.style.backgroundColor = '#16A34A';
+      } else {
+        try {
+          currentSteps = JSON.parse(editTextarea.value);
+          isEditing = false;
+          editTextarea.style.display = 'none';
+          
+          const updatedConfirmation = {
+            ...confirmation,
+            plan: { ...confirmation.plan, steps: currentSteps }
+          };
+          
+          // Re-validate edited steps
+          const reValidation = validatePlanFrontend(updatedConfirmation);
+          if (!reValidation.valid) {
+            alert("Edited plan failed validation: " + reValidation.errors.join(", "));
+            isEditing = true;
+            editTextarea.style.display = '';
+            newEdit.textContent = 'Save Plan';
+            newEdit.style.backgroundColor = '#16A34A';
+            return;
+          }
+
+          detailsEl.innerHTML = buildConfirmDetails(updatedConfirmation);
+          detailsEl.style.display = '';
+          newEdit.textContent = 'Edit Plan';
+          newEdit.style.backgroundColor = '#6c757d';
+        } catch (err) {
+          alert("Invalid JSON format. Please correct it before saving.");
+        }
+      }
+    });
+
+    newProceed.addEventListener('click', async () => {
+      console.log("Proceed clicked");
+      if (isEditing) {
+        try {
+          currentSteps = JSON.parse(editTextarea.value);
+        } catch (err) {
+          alert("Invalid JSON format. Please correct it before approving.");
+          return;
+        }
+      }
+      hideConfirmationCard();
+      transitionTo(FSM_STATES.EXECUTING);
+      console.log("Starting execution");
+      await sendConfirmation('proceed', currentSteps);
+    });
+
+    newCancel.addEventListener('click', async () => {
+      console.log("Cancel clicked");
+      hideConfirmationCard();
+      await sendConfirmation('cancel');
+      transitionTo(FSM_STATES.IDLE);
+    });
+  }
 }
 
 function buildConfirmDetails(confirmation) {
-  const tool = confirmation.tool || '';
-  const args = confirmation.args || {};
-
-  if (tool === 'send_whatsapp_message' || tool === 'type_message') {
-    let html = '';
-    if (args.contact) {
-      html += `<div class="confirm-detail-row">
-        <span class="confirm-detail-label">Contact</span>
-        <span class="confirm-detail-value">${escapeHtml(args.contact)}</span>
-      </div>`;
-    }
-    if (args.message) {
-      html += `<div class="confirm-detail-row">
-        <span class="confirm-detail-label">Message</span>
-        <span class="confirm-detail-value">${escapeHtml(args.message)}</span>
-      </div>`;
-    }
-    return html || '';
-  }
-
-  if (tool === 'delete_file' || tool === 'delete_folder') {
-    const path = args.path || args.filename || 'unknown';
-    return `<div class="confirm-detail-row">
-      <span class="confirm-detail-label">Path</span>
-      <span class="confirm-detail-value">${escapeHtml(path)}</span>
-    </div>`;
-  }
-
-  if (tool === 'shutdown_system' || tool === 'reboot_system') {
-    return '';
-  }
-
-  if (tool === 'execute_shell') {
-    const cmd = args.command || args.cmd || '';
-    return `<div class="confirm-detail-row">
-      <span class="confirm-detail-label">Command</span>
-      <span class="confirm-detail-value">${escapeHtml(cmd)}</span>
-    </div>`;
-  }
-
   let html = '';
-  for (const [k, v] of Object.entries(args)) {
-    html += `<div class="confirm-detail-row">
-      <span class="confirm-detail-label">${escapeHtml(k)}</span>
-      <span class="confirm-detail-value">${escapeHtml(String(v))}</span>
+  
+  if (confirmation.plan && confirmation.plan.steps) {
+    const steps = confirmation.plan.steps;
+    if (steps.length === 0) {
+      return '<div style="color: #dc2626; font-weight: bold; padding: 12px; border: 1px solid #fecaca; background-color: #fef2f2; border-radius: 6px;">No executable actions generated.</div>';
+    }
+    
+    // 1. Task Description
+    html += `<div class="confirm-section" style="margin-bottom: 12px;">
+      <strong style="font-size: 13px; color: var(--text-muted);">Task:</strong>
+      <div style="font-size: 14px; font-weight: 600; margin-top: 4px;">${escapeHtml(confirmation.task_description || confirmation.message || "Execute user request")}</div>
     </div>`;
+
+    // 2. Execution Plan
+    html += `<div class="confirm-section" style="margin-bottom: 12px;">
+      <strong style="font-size: 13px; color: var(--text-muted);">Execution Plan</strong>
+      <ol style="margin-top: 6px; padding-left: 20px; list-style: decimal;">`;
+      
+    steps.forEach((step, index) => {
+      const tool = step.tool || 'unknown';
+      const desc = step.description || `Run ${tool.replace(/_/g, ' ')}`;
+      html += `<li style="margin-bottom: 4px; font-size: 13px;">${escapeHtml(desc)}</li>`;
+    });
+    
+    html += `</ol></div>`;
+
+    // 3. Estimated Time
+    let minTime = 5;
+    let maxTime = 10;
+    const hasWhatsApp = steps.some(s => s.tool && s.tool.includes("whatsapp"));
+    const hasSpotify = steps.some(s => s.tool && (s.tool.includes("spotify") || s.tool.includes("music")));
+    if (hasWhatsApp || hasSpotify) {
+      minTime = 15;
+      maxTime = 30;
+    }
+    html += `<div class="confirm-section" style="margin-bottom: 12px;">
+      <strong style="font-size: 13px; color: var(--text-muted);">Estimated Time:</strong>
+      <div style="font-size: 13px; margin-top: 2px;">${minTime}–${maxTime} seconds</div>
+    </div>`;
+
+    // 4. Automation Notice
+    html += `<div class="confirm-section" style="margin-bottom: 12px; padding: 10px; border-left: 4px solid var(--primary); background: rgba(var(--primary-rgb), 0.1); border-radius: 4px;">
+      <strong style="font-size: 12px; color: var(--primary);">Automation Notice</strong>
+      <div style="font-size: 12px; margin-top: 2px; line-height: 1.4;">
+        "This assistant will temporarily control your keyboard and mouse while executing the approved task."
+      </div>
+    </div>`;
+    
+    console.log("[FRONTEND] Rendered Steps Count:", steps.length);
+    return html;
   }
-  return html;
+  
+  return '<div style="color: #dc2626; font-weight: bold; padding: 12px; border: 1px solid #fecaca; background-color: #fef2f2; border-radius: 6px;">No executable actions generated.</div>';
 }
 
 function getConfirmButtonLabel(tool) {
@@ -703,7 +1001,7 @@ function hideConfirmationCard() {
     clearInterval(confirmationTimer);
     confirmationTimer = null;
   }
-  activeConfirmationId = null;
+  // Do not clear activeConfirmationId here, as sendConfirmation needs it!
 
   setTimeout(() => {
     card.style.display = 'none';
@@ -711,67 +1009,63 @@ function hideConfirmationCard() {
   }, 350);
 }
 
-function attachConfirmationListeners() {
-  const proceedBtn = document.getElementById('btn-proceed');
-  const cancelBtn  = document.getElementById('btn-cancel');
-
-  const newProceed = proceedBtn.cloneNode(true);
-  const newCancel  = cancelBtn.cloneNode(true);
-  proceedBtn.parentNode.replaceChild(newProceed, proceedBtn);
-  cancelBtn.parentNode.replaceChild(newCancel, cancelBtn);
-
-  newProceed.addEventListener('click', () => sendConfirmation('proceed'));
-  newCancel.addEventListener('click',  () => sendConfirmation('cancel'));
-}
-
-async function sendConfirmation(decision) {
+async function sendConfirmation(decision, editedSteps = null) {
   if (!activeConfirmationId) return;
 
   const confirmId  = activeConfirmationId;
+  activeConfirmationId = null;
   const proceedBtn = document.getElementById('btn-proceed');
   const cancelBtn  = document.getElementById('btn-cancel');
+  const editBtn    = document.getElementById('btn-edit');
+  
   proceedBtn.disabled = true;
   cancelBtn.disabled  = true;
+  editBtn.disabled    = true;
   proceedBtn.style.opacity = '0.6';
   cancelBtn.style.opacity  = '0.6';
+  editBtn.style.opacity    = '0.6';
 
   statusText.textContent = decision === 'proceed' ? 'Executing…' : 'Cancelling…';
 
   try {
-    const res = await fetch('/confirm', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        confirmation_id: confirmId,
-        decision: decision,
-      }),
-    });
-
-    const data = await res.json();
-
-    hideConfirmationCard();
-
-    statusText.textContent = data.success
-      ? 'Complete.'
-      : 'Action completed with issues.';
-
-    document.getElementById('response-text').textContent =
-      data.message || (decision === 'cancel' ? 'Action cancelled.' : 'Done.');
-
-    const player = document.getElementById('audio-player');
-    if (data.speech && data.speech.audio_url) {
-      player.src = data.speech.audio_url;
-      player.style.display = 'block';
-      setTimeout(() => player.play().catch(() => { }), 300);
-    } else {
-      player.style.display = 'none';
+    const payload = {
+      confirmation_id: confirmId,
+      decision: decision,
+    };
+    if (editedSteps) {
+      payload.edited_steps = editedSteps;
     }
 
-    document.getElementById('sec-response').classList.add('visible');
+    const res = await fetch('/confirm?stream=true', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'text/event-stream'
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+      const errorText = await res.text();
+      throw new Error(`Server returned ${res.status}: ${errorText}`);
+    }
+
+    if (decision === 'proceed') {
+      hideConfirmationCard();
+      const execDiv = document.getElementById('execution-val');
+      if (execDiv) execDiv.innerHTML = '';
+      await consumeSSEStream(res.body);
+    } else {
+      hideConfirmationCard();
+      statusText.textContent = 'Action cancelled.';
+      document.getElementById('sec-response').classList.add('visible');
+    }
 
   } catch (err) {
     hideConfirmationCard();
-    statusText.textContent = 'Network error during confirmation.';
+    statusText.textContent = 'Error during confirmation: ' + err.message;
+    transitionTo(FSM_STATES.IDLE);
+    console.error("Confirmation error:", err);
   }
 }
 
@@ -829,9 +1123,11 @@ async function checkPendingConfirmation() {
     if (data.confirmation) {
       statusText.textContent = 'Pending confirmation restored.';
       renderConfirmationCard(data.confirmation);
+    } else {
+      transitionTo(FSM_STATES.IDLE);
     }
   } catch (_) {
-    // Silently ignore — no pending confirmation
+    transitionTo(FSM_STATES.IDLE);
   }
 }
 
@@ -860,3 +1156,138 @@ function escapeHtml(text) {
   div.textContent = text;
   return div.innerHTML;
 }
+
+// ══════════════════════════════════════════════════════════════════════
+// Execution Completion Popup Helpers
+// ══════════════════════════════════════════════════════════════════════
+
+function showCompletionPopup(data, success) {
+  console.log("Popup Triggered");
+  const popup = document.getElementById('completion-popup');
+  const header = document.getElementById('completion-popup-header');
+  const icon = document.getElementById('completion-popup-icon');
+  const title = document.getElementById('completion-popup-title');
+  const responseEl = document.getElementById('completion-popup-response');
+  const summaryEl = document.getElementById('completion-popup-summary');
+  const errorSection = document.getElementById('completion-popup-error-section');
+  const errorEl = document.getElementById('completion-popup-error');
+
+  if (!popup) return;
+
+  // Clear existing timers
+  if (popupAutoCloseTimer) clearTimeout(popupAutoCloseTimer);
+  if (fsmIdleTimer) clearTimeout(fsmIdleTimer);
+
+  // Setup header styling
+  if (success) {
+    if (header) header.className = 'completion-popup-header success';
+    if (icon) icon.textContent = '✓';
+    if (title) title.textContent = 'Task Completed';
+  } else {
+    if (header) header.className = 'completion-popup-header failure';
+    if (icon) icon.textContent = '❌';
+    if (title) title.textContent = 'Task Failed';
+  }
+
+  // Setup response text
+  const responseText = (data && data.speech && data.speech.text) || 
+                       (data && data.speech && typeof data.speech === 'string' ? data.speech : '') || 
+                       (success ? 'Task completed successfully.' : 'An error occurred during execution.');
+  if (responseEl) responseEl.textContent = responseText;
+
+  // Setup summary
+  if (summaryEl) {
+    summaryEl.innerHTML = '';
+    const executionSteps = (data && data.execution) ? data.execution : [];
+    if (executionSteps.length > 0) {
+      executionSteps.forEach(step => {
+        const row = document.createElement('div');
+        row.className = 'completion-popup-step-row';
+        const stepName = document.createElement('span');
+        stepName.className = 'completion-popup-step-name';
+        stepName.textContent = step.tool || 'unknown';
+        
+        const stepStatus = document.createElement('span');
+        stepStatus.className = 'completion-popup-step-status ' + (step.success ? 'success' : 'failure');
+        stepStatus.textContent = step.success ? '✓ Success' : '✗ Failed';
+        
+        row.appendChild(stepName);
+        row.appendChild(stepStatus);
+        summaryEl.appendChild(row);
+      });
+    } else {
+      const fallbackText = document.createElement('div');
+      fallbackText.style.fontSize = '12px';
+      fallbackText.style.color = 'var(--text-muted)';
+      fallbackText.style.fontStyle = 'italic';
+      fallbackText.textContent = success ? 'No action steps required (Conversational).' : 'No steps executed.';
+      summaryEl.appendChild(fallbackText);
+    }
+  }
+
+  // Setup error
+  if (errorSection && errorEl) {
+    const errorMsg = (data && data.error) || '';
+    if (errorMsg) {
+      errorEl.textContent = errorMsg;
+      errorSection.classList.remove('hidden');
+    } else {
+      errorSection.classList.add('hidden');
+    }
+  }
+
+  // Show popup
+  popup.classList.remove('hidden');
+  popup.setAttribute('aria-hidden', 'false');
+
+  // Setup auto-close timers (5 seconds)
+  popupAutoCloseTimer = setTimeout(() => {
+    hideCompletionPopup();
+  }, 5000);
+
+  fsmIdleTimer = setTimeout(() => {
+    transitionTo(FSM_STATES.IDLE);
+  }, 5000);
+}
+
+function hideCompletionPopup() {
+  const popup = document.getElementById('completion-popup');
+  if (popup && !popup.classList.contains('hidden')) {
+    popup.classList.add('hidden');
+    popup.setAttribute('aria-hidden', 'true');
+    console.log("Popup Closed");
+  }
+  if (popupAutoCloseTimer) {
+    clearTimeout(popupAutoCloseTimer);
+    popupAutoCloseTimer = null;
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Event Listeners for Completion Popup and Audio Player
+// ══════════════════════════════════════════════════════════════════════
+
+document.addEventListener('DOMContentLoaded', () => {
+  const closeBtn = document.getElementById('completion-popup-close-btn');
+  if (closeBtn) {
+    closeBtn.addEventListener('click', () => {
+      unlockAudio();
+      hideCompletionPopup();
+    });
+  }
+
+  // Set up logging listeners on the audio element
+  const audioEl = document.getElementById('audio-player');
+  if (audioEl) {
+    audioEl.addEventListener('play', () => {
+      console.log("Audio Playback Started");
+    });
+    audioEl.addEventListener('ended', () => {
+      console.log("Playback Completed");
+    });
+    audioEl.addEventListener('error', (e) => {
+      console.error("Playback Failed", e);
+    });
+  }
+});
+
