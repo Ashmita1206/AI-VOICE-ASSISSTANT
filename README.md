@@ -1,187 +1,369 @@
-# AI Voice Assistant
+<div align="center">
 
-A speech-based desktop automation assistant built for Windows. This project translates natural voice commands into sequential operating system execution graphs, automating interactions with desktop applications, web browsers, local filesystems, and messaging clients.
+<img src="https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6?style=for-the-badge&logo=windows&logoColor=white" />
+<img src="https://img.shields.io/badge/Python-3.10%20%7C%203.11-3776AB?style=for-the-badge&logo=python&logoColor=white" />
+<img src="https://img.shields.io/badge/Flask-3.x-000000?style=for-the-badge&logo=flask&logoColor=white" />
+<img src="https://img.shields.io/badge/Whisper-Faster--Whisper-412991?style=for-the-badge&logo=openai&logoColor=white" />
+<img src="https://img.shields.io/badge/Playwright-Chromium-45ba4b?style=for-the-badge&logo=playwright&logoColor=white" />
+<img src="https://img.shields.io/badge/Storage-SQLite-003B57?style=for-the-badge&logo=sqlite&logoColor=white" />
+<img src="https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge" />
+
+<br/><br/>
+
+# 🎙️ AI Voice Assistant
+
+### *Speech → Plan → Action. Hands-free Windows desktop control powered by local AI.*
+
+A Windows-native voice automation assistant that translates natural speech (including **Hinglish**) into executable OS action graphs — launching apps, browsing the web, managing files, and sending messages, all without touching a mouse.
+
+<br/>
+
+[![Documentation](#-detailed-execution-pipeline) ·
+[Architecture](#-system-architecture) ·
+[Installation](#-installation-guide) ·
+[Usage Examples](#-usage-examples) ·
+[Roadmap](#-roadmap)]
+
+</div>
 
 ---
 
-## # Project Overview
+## 📋 Table of Contents
+
+| Section | Description |
+|---|---|
+| [🎬 Demo](#-demo) | Screenshots and GIF placeholders |
+| [🔍 Project Overview](#-project-overview) | What it is, what problem it solves |
+| [✨ Features](#-features) | Full feature matrix |
+| [🔄 Project Workflow](#-project-workflow) | End-to-end Mermaid flowchart |
+| [🏗 System Architecture](#-system-architecture) | Component diagram and data flows |
+| [⚙️ Detailed Execution Pipeline](#-detailed-execution-pipeline) | Stage-by-stage breakdown |
+| [🔁 Stateful Execution Engine](#-stateful-execution-engine) | State machine, wait utils, recovery |
+| [📁 Folder Structure](#-folder-structure) | Directory tree |
+| [🧩 Module Explanation](#-module-explanation) | Per-module reference |
+| [🛠 Technology Stack](#-technology-stack) | Libraries and frameworks |
+| [⚙️ Configuration](#️-configuration) | Environment variables |
+| [🚀 Installation Guide](#-installation-guide) | Setup steps and troubleshooting |
+| [💬 Usage Examples](#-usage-examples) | Voice → Plan → Result walkthroughs |
+| [🧪 Testing](#-testing) | Test suite overview |
+| [⚠️ Current Limitations](#️-current-limitations) | Honest capability boundaries |
+| [🗺 Roadmap](#-roadmap) | Planned improvements checklist |
+
+---
+
+## 🎬 Demo
+
+<div align="center">
+
+<!-- PLACEHOLDER: Replace with actual demo GIF (screen recording of voice command → app launch) -->
+> 📹 **Demo GIF** — *Record a short screen capture of a voice command and drop it here.*
+> Suggested: `docs/assets/demo.gif`
+
+```
+┌─────────────────────────────────────────────────────┐
+│                                                     │
+│          [ 🎬 Demo GIF Placeholder ]                │
+│      Voice command → App launches automatically     │
+│                                                     │
+└─────────────────────────────────────────────────────┘
+```
+
+<!-- PLACEHOLDER: Dashboard screenshot -->
+> 🖥️ **Dashboard Screenshot** — `docs/assets/dashboard.png`
+
+<!-- PLACEHOLDER: Confirmation dialog screenshot -->
+> 🔒 **Safety Confirmation Dialog** — `docs/assets/confirm_dialog.png`
+
+<!-- PLACEHOLDER: Voice recording animation -->
+> 🎤 **Voice Recording Waveform** — `docs/assets/recording_animation.gif`
+
+<!-- PLACEHOLDER: Execution result screenshot -->
+> ✅ **Execution Result Panel** — `docs/assets/execution_result.png`
+
+</div>
+
+---
+
+## 🔍 Project Overview
 
 ### What is this project?
-This project is a Windows-compatible voice-control application that maps speech or text inputs to executable action graphs (plans) on the host computer. It combines local speech-to-text, pattern-based NLP classifications, external large language model (LLM) planning, and programmatic GUI/web drivers to interact with the OS.
+
+This project is a Windows-compatible voice-control application that maps **speech or text inputs** to executable **action graphs (plans)** on the host computer. It combines:
+
+- 🎤 **Local speech-to-text** (Faster-Whisper, quantized model inference)
+- 🧠 **Pattern-based NLP** (intent classification + entity slot extraction)
+- 🌐 **LLM task planning** (remote OpenAI-compatible API with offline fallback)
+- 🖥️ **Programmatic GUI/web drivers** (PyAutoGUI, Win32 APIs, Playwright)
 
 ### What problem does it solve?
-It eliminates manual user interaction (mouse clicking, keyboard typing, directory navigating, menu searching) for common desktop workflows. By listening to natural commands, it compiles resource locations, launches applications, searches directories, and performs tasks hands-free.
 
-### How does it work?
-1. **Audio Capture**: The system monitors the microphone, records spoken audio using `sounddevice`, and detects speech endings via root-mean-square amplitude silence detection.
-2. **Speech-to-Text**: The captured WAV file is processed locally by a Faster-Whisper engine, generating a plain-text transcription.
-3. **Intent & Entity Processing**: The transcription is normalized (including Hinglish translation). A pattern matcher extracts target slots like application names, query parameters, directory paths, or contacts.
-4. **Task Planning**: The system sends the transcript along with compiled system context (installed apps, running processes, bookmarks) to an external OpenAI-compatible planner API. If offline, the request falls back to a rule-based heuristic planner.
-5. **Safety Gate**: The generated plan steps are verified against a tool registry. Dangerous operations (e.g. deleting files, sending chat messages) are blocked, and a confirmation request is posted to the Flask web UI.
-6. **OS Execution**: Safe steps (or confirmed dangerous steps) are dispatched to automation drivers (PyAutoGUI, Playwright, Win32 APIs).
-7. **Feedback**: The execution outcome is converted into conversational English and spoken back to the user via neural Edge-TTS or Pyttsx3.
+It eliminates manual user interaction — mouse clicking, keyboard typing, directory navigating, menu searching — for common desktop workflows. By listening to natural commands, it:
+
+- Compiles resource locations
+- Launches applications
+- Searches directories and the web
+- Sends messages
+- Manages files
+
+...all completely hands-free.
 
 ### Who is it for?
-- Power users seeking hands-free desktop control.
-- Accessibility developers building system integrations.
-- Automation engineers exploring voice-driven OS agent execution.
+
+| Audience | Use Case |
+|---|---|
+| 🧑‍💻 Power users | Hands-free desktop control via voice |
+| ♿ Accessibility developers | Building system integrations for users with mobility impairments |
+| 🤖 Automation engineers | Exploring voice-driven OS agent execution |
 
 ### How is it different from a basic speech recognizer?
-A basic speech recognizer only transcribes audio to text. This assistant parses semantic intents, resolves contextual references (e.g., *"it"*, *"here"*), dynamically indexes the local system to find resource targets, manages stateful execution logs in an SQLite database, stops dangerous operations using confirmation guards, and runs recovery blocks (e.g. taking screenshots and refocusing windows) when steps fail.
+
+A basic speech recognizer only transcribes audio to text. This assistant:
+
+- Parses **semantic intents** and resolves contextual references (*"it"*, *"here"*)
+- **Dynamically indexes** the local system to find resource targets
+- Manages **stateful execution logs** in an SQLite database
+- **Stops dangerous operations** using confirmation guards
+- Runs **recovery blocks** (screenshot capture, window refocus) when steps fail
 
 ---
 
-## # Features
+## ✨ Features
 
-Only features fully implemented in the codebase are listed below:
+> Only features **fully implemented** in the codebase are listed below.
 
-- **Speech Recognition**: Local Faster-Whisper STT running quantized model inference.
-- **Voice Activity Detection**: Real-time microphone capture stopping automatically after a duration of silence.
-- **Hinglish Normalization**: Table-driven normalization mapping phonetic slang, typos, and common Hindi phrases to English tokens.
-- **Intent Classification**: Keyword scoring and regex pattern mapping to determine user goals, with compound command splitting.
-- **Entity Slot Extraction**: Rule-based and regex extraction of parameters (directories, queries, apps, websites).
-- **Desktop Resource Discovery**: Background scan daemon caching installed apps (UWP/Indexed), running processes, browser bookmarks/history, and folders.
-- **Action Planning**: Remote OpenAI-compatible planning server integration with local fallback rules.
-- **Safety Confirmation Gate**: Explicit permission boundary blocking dangerous tools and requiring manual web UI confirmation.
-- **Desktop & Win32 Automation**: Focus management, window enumeration, mouse clicks, and keyboard simulator inputs.
-- **Browser Automation**: Playwright-driven WhatsApp Web automation and default browser search launches.
-- **File Management**: Programmatic directory listings, folder creation, file readings, and deletions.
-- **Text-to-Speech Response**: Neural Edge-TTS client with offline system-native Pyttsx3 fallback.
-- **SQLite History Log**: Local database tracking sessions, transcripts, intents, plans, and outcomes.
+| Feature | Module | Status |
+|---|---|:---:|
+| 🎤 Voice Recording (silence detection) | `stt/audio_capture.py` | ✅ |
+| 📝 Local Speech-to-Text (Faster-Whisper) | `stt/whisper_engine.py` | ✅ |
+| 🌐 Remote STT (Colab GPU server) | `stt/` + `.env` | ✅ |
+| 🔤 Hinglish Normalization | `agent/preprocess.py` | ✅ |
+| 🧠 Intent Classification | `agent/intent_classifier.py` | ✅ |
+| 🎯 Entity Slot Extraction | `agent/entity_extractor.py` | ✅ |
+| 📡 Remote LLM Planner | `agentic/llm/manager.py` | ✅ |
+| 📋 Rule-Based Fallback Planner | `agentic/llm/fallback.py` | ✅ |
+| 🔍 Desktop Resource Discovery | `agentic/discovery/indexer.py` | ✅ |
+| 🛡️ Safety Confirmation Gate | `agentic/permissions.py` | ✅ |
+| 🖥️ Desktop & Win32 Automation | `automation/desktop.py` | ✅ |
+| 📂 File System Management | `automation/filesystem.py` | ✅ |
+| 🌍 Browser Automation | `automation/browser.py` | ✅ |
+| 💬 WhatsApp Web Automation | `automation/whatsapp.py` | ✅ |
+| 🔊 Neural TTS (Edge-TTS) | `tts/edge_engine.py` | ✅ |
+| 🔈 Offline TTS Fallback (Pyttsx3) | `tts/pyttsx3_engine.py` | ✅ |
+| 💾 SQLite Session History | `storage/database.py` | ✅ |
+| 🔄 Stateful Execution Engine | `execution/executor.py` | ✅ |
+| 🩹 Automated Failure Recovery | `execution/recovery.py` | ✅ |
+| 🌐 Flask Web Dashboard | `web/app.py` | ✅ |
+| 🔗 Multi-step Execution Workflows | — | 🚧 Partial |
+| 👁️ OCR / Vision Integration | — | 🔲 Planned |
+| 🔔 Wake Word Detection | — | 🔲 Planned |
 
 ---
 
-## # System Architecture
+## 🔄 Project Workflow
 
-The following diagram maps the components and data flows implemented in the project codebase:
+The complete end-to-end pipeline from voice input to system action:
 
 ```mermaid
-graph TD
-    User([🎤 User Audio Input]) --> |WAV Stream| STT[📝 stt/whisper_engine.py]
-    STT --> |Raw Transcript| Normalizer[⚙️ agent/preprocess.py]
-    Normalizer --> |Normalized Text| IntentClassifier[🧠 agent/intent_classifier.py]
-    
-    IntentClassifier --> |Parsed Intent & Entities| PlannerManager[📋 agentic/llm/manager.py]
-    PlannerManager --> |System Context & Query| RemoteLLM{🌐 Remote LLM Planner?}
-    
-    RemoteLLM -- Yes --> API[requests/openai_client]
-    RemoteLLM -- No/Fallback --> Heuristic[📋 agentic/llm/fallback.py]
-    
-    API --> |JSON Steps| SafetyGate[🛡️ agentic/tool_registry.py]
-    Heuristic --> |JSON Steps| SafetyGate
-    
-    SafetyGate -- Dangerous Tool --> Queue[📱 web/confirm_service.py]
-    Queue --> |Wait for approval| Approval{User Approves?}
-    Approval -- Proceed --> Executor[⚙️ execution/executor.py]
-    Approval -- Cancel --> Clear[🧹 Clear Session]
-    
-    SafetyGate -- Safe Tool --> Executor
-    
-    Executor --> |Step Dispatch| Automation[🛠️ automation/*]
-    Automation --> |Run Drivers| Windows[💻 Windows OS / Apps / Web]
-    
-    Windows --> |Success/Error state| Recovery{🩹 Execution Succeeded?}
-    Recovery -- Succeeded --> TTS[🔊 tts/manager.py]
-    Recovery -- Failed --> Refocus[🩹 auto-refocus & retry]
-    Refocus --> Automation
-    
-    TTS --> |Speak Feedback| Playback[🔉 Pygame / Browser audio]
-    TTS --> |Record Turn| DB[💾 storage/database.py]
+flowchart TD
+    A([🎤 User Speaks]) --> B[🎙️ Audio Capture\nstt/audio_capture.py]
+    B -->|WAV file| C[📝 Speech-to-Text\nFaster-Whisper]
+    C -->|Raw transcript| D[⚙️ Text Preprocessing\nHinglish → English]
+    D -->|Normalized text| E[🧠 Intent & Entity Extraction\nagent/intent_classifier.py]
+
+    E -->|Parsed intent + entities| F[📋 Task Planning\nagentic/llm/manager.py]
+    F --> G{🌐 Remote LLM\nAvailable?}
+    G -->|Yes| H[🌐 Remote Planner API\nOpenAI-compatible]
+    G -->|No / Timeout| I[📋 Fallback Planner\nRule-based heuristics]
+
+    H -->|JSON plan steps| J[🛡️ Safety Gate\nagentic/permissions.py]
+    I -->|JSON plan steps| J
+
+    J --> K{⚠️ Dangerous\nTool?}
+    K -->|Yes| L[🔒 Web UI Confirmation\nweb/confirm_service.py]
+    L -->|User approves| M[⚙️ Execution Engine\nexecution/executor.py]
+    L -->|User cancels| N([🧹 Clear Session])
+    K -->|No - Safe tool| M
+
+    M -->|Step dispatch| O[🛠️ Automation Layer\nautomation/*]
+    O --> P[💻 Windows OS / Apps / Web]
+
+    P --> Q{✅ Step\nSucceeded?}
+    Q -->|Yes| R[🔊 TTS Response\ntts/manager.py]
+    Q -->|No| S[🩹 Recovery Engine\nexecution/recovery.py]
+    S -->|Retry| O
+
+    R --> T([💾 SQLite History\nstorage/database.py])
 ```
 
 ---
 
-## # Detailed Execution Pipeline
+## 🏗 System Architecture
 
-### 1. Audio Capture (stt/audio_capture.py)
-- **Purpose**: Capture sound from microphone.
-- **Input**: Physical acoustic signals.
-- **Output**: Temporary `.wav` file path on disk.
-- **Responsible Module**: `stt`
-- **Important Functions**: `record()`, `record_until_silence()`
-- **Important Classes**: `AudioRecorder`
-- **Failure Cases**: No default microphone, sounddevice query failure.
-- **Recovery Strategy**: Falls back to warning logs and empty recording blocks.
+The following diagram maps all components and their data flows:
 
-### 2. Speech-to-Text (stt/whisper_engine.py)
-- **Purpose**: Transcribe speech to text.
-- **Input**: WAV file path.
-- **Output**: `TranscriptionResult` (dict containing transcribed text, language details, and processing times).
-- **Responsible Module**: `stt`
-- **Important Functions**: `transcribe()`
-- **Important Classes**: `WhisperSTT`
-- **Failure Cases**: Quantized model binary download failures, CPU float conversion errors.
-- **Recovery Strategy**: Outputs empty transcripts and logs warnings.
+```mermaid
+graph TD
+    User([🎤 User Audio Input]) -->|WAV Stream| STT[📝 stt/whisper_engine.py]
+    STT -->|Raw Transcript| Normalizer[⚙️ agent/preprocess.py]
+    Normalizer -->|Normalized Text| IntentClassifier[🧠 agent/intent_classifier.py]
 
-### 3. Preprocessing (agent/preprocess.py)
-- **Purpose**: Clean and translate voice transcriptions.
-- **Input**: Raw text string.
-- **Output**: Normalized text string.
-- **Responsible Module**: `agent`
-- **Important Functions**: `normalize_text()`, `tokenize()`
-- **Important Classes**: `TextPreprocessor`
-- **Failure Cases**: Long strings with non-ASCII symbols.
-- **Recovery Strategy**: Keeps raw alphanumeric tokens and discards unmapped symbols.
+    IntentClassifier -->|Parsed Intent & Entities| PlannerManager[📋 agentic/llm/manager.py]
+    PlannerManager -->|System Context & Query| RemoteLLM{🌐 Remote LLM Planner?}
 
-### 4. Intent & Entity Extraction (agent/intent_classifier.py, agent/entity_extractor.py)
-- **Purpose**: Parse goals and parameters.
-- **Input**: Normalized string.
-- **Output**: `CommandIntent` schema (intent string, entities dict, confidence score).
-- **Responsible Module**: `agent`
-- **Important Functions**: `classify()`, `extract_entities()`
-- **Important Classes**: `IntentClassifier`, `EntityExtractor`
-- **Failure Cases**: Sentence matches multiple conflicting patterns.
-- **Recovery Strategy**: Splits compound sentences on conjunctions and returns the intent with the highest pattern overlap score.
+    RemoteLLM -- Yes --> API[requests / openai_client]
+    RemoteLLM -- No/Fallback --> Heuristic[📋 agentic/llm/fallback.py]
 
-### 5. Planning Layer (agentic/llm/manager.py, agentic/llm/fallback.py)
-- **Purpose**: Generate multi-step execution graphs.
-- **Input**: Transcript string and system discovery context dictionary.
-- **Output**: `PlannerOutput` containing reasoning and a list of steps.
-- **Responsible Module**: `agentic/llm`
-- **Important Functions**: `plan()`, `apply_heuristic_fallback()`
-- **Important Classes**: `PlannerManager`
-- **Failure Cases**: Remote API connection timeouts or JSON schema mismatches.
-- **Recovery Strategy**: Gracefully activates `apply_heuristic_fallback()` to run offline rule-based task planning.
+    API -->|JSON Steps| SafetyGate[🛡️ agentic/tool_registry.py]
+    Heuristic -->|JSON Steps| SafetyGate
 
-### 6. Safety Gate (agentic/tool_registry.py, web/confirm_service.py)
-- **Purpose**: Identify and halt hazardous actions.
-- **Input**: `PlannerOutput` plan step details.
-- **Output**: Execution permit or blocked confirmation UUID.
-- **Responsible Module**: `agentic` / `web`
-- **Important Functions**: `check_permissions()`, `handle_confirm()`
-- **Important Classes**: `PermissionManager`, `PendingActionManager`
-- **Failure Cases**: User closes the browser during a safety block.
-- **Recovery Strategy**: Ephemeral confirmation states expire automatically after 60 seconds of inactivity.
+    SafetyGate -- Dangerous Tool --> Queue[📱 web/confirm_service.py]
+    Queue -->|Wait for approval| Approval{User Approves?}
+    Approval -- Proceed --> Executor[⚙️ execution/executor.py]
+    Approval -- Cancel --> Clear[🧹 Clear Session]
 
-### 7. Execution Engine (execution/executor.py)
-- **Purpose**: Run plan steps sequentially using a state-aware lifecycle.
-- **Input**: `ExecutionPlan` containing action steps (optionally with `wait_for`, `timeout`, and `requires` metadata).
-- **Output**: List of step-by-step execution results tracking attempts, lifecycle states, and recovery strategies.
-- **Responsible Module**: `execution`
-- **Important Functions**: `execute()`, `execute_step()`, `dispatch_wait()`, `dispatch_verify()`, `recover_step()`
-- **Important Classes**: `DesktopExecutor`, `StepRecord`, `ExecutionContext`, `StepStatus`
-- **Failure Cases**: Target application unresponsive, window fails to load, UI focus mismatch, or step verification failure.
-- **Recovery Strategy**: Structured recovery state machine (captures debug screenshot, restores minimized windows, brings target app to foreground, or relaunches process) and retries step up to configured `max_retries` (default: 2).
+    SafetyGate -- Safe Tool --> Executor
 
-### 8. Automation Layer (automation/*)
-- **Purpose**: Interface directly with system resources.
-- **Input**: Execution payload arguments.
-- **Output**: `ExecutionResult` model.
-- **Responsible Module**: `automation`
-- **Important Functions**: `open_application()`, `open_browser()`, `open_folder()`, `send_whatsapp_message()`
-- **Important Classes**: Programmatic helper functions.
-- **Failure Cases**: Playwright chromium context locks, OS lockscreen blocks.
-- **Recovery Strategy**: Returns failed `ExecutionResult` to executor to trigger recovery logic.
+    Executor -->|Step Dispatch| Automation[🛠️ automation/*]
+    Automation -->|Run Drivers| Windows[💻 Windows OS / Apps / Web]
+
+    Windows -->|Success/Error state| Recovery{🩹 Execution Succeeded?}
+    Recovery -- Succeeded --> TTS[🔊 tts/manager.py]
+    Recovery -- Failed --> Refocus[🩹 auto-refocus & retry]
+    Refocus --> Automation
+
+    TTS -->|Speak Feedback| Playback[🔉 Pygame / Browser audio]
+    TTS -->|Record Turn| DB[💾 storage/database.py]
+```
 
 ---
 
-## # Stateful Execution Engine
+## ⚙️ Detailed Execution Pipeline
 
-The execution engine is redesigned around a state-aware, sequential state machine that validates the execution state of each action before proceeding to the next step.
+<details>
+<summary><strong>📖 Click to expand all pipeline stages</strong></summary>
+
+### Stage 1 — Audio Capture
+
+| Property | Value |
+|---|---|
+| **Module** | `stt/audio_capture.py` |
+| **Input** | Physical acoustic signals from microphone |
+| **Output** | Temporary `.wav` file path on disk |
+| **Key Classes** | `AudioRecorder` |
+| **Key Functions** | `record()`, `record_until_silence()` |
+| **Failure Cases** | No default microphone, sounddevice query failure |
+| **Recovery** | Falls back to warning logs and empty recording blocks |
+
+---
+
+### Stage 2 — Speech-to-Text
+
+| Property | Value |
+|---|---|
+| **Module** | `stt/whisper_engine.py` |
+| **Input** | WAV file path |
+| **Output** | `TranscriptionResult` — transcribed text, language details, timing |
+| **Key Classes** | `WhisperSTT` |
+| **Key Functions** | `transcribe()` |
+| **Model** | `deepdml/faster-whisper-large-v3-turbo-ct2` |
+| **GPU Mode** | `float16` on CUDA, `int8` on CPU |
+| **Failure Cases** | Model download failure, CPU float conversion errors |
+| **Recovery** | Outputs empty transcripts and logs warnings |
+
+---
+
+### Stage 3 — Text Preprocessing
+
+| Property | Value |
+|---|---|
+| **Module** | `agent/preprocess.py` |
+| **Input** | Raw text string |
+| **Output** | Normalized, clean English string |
+| **Key Classes** | `TextPreprocessor` |
+| **Key Functions** | `normalize_text()`, `tokenize()` |
+| **Capabilities** | Hinglish → English, typo correction, punctuation removal |
+| **Failure Cases** | Long strings with non-ASCII symbols |
+| **Recovery** | Keeps raw alphanumeric tokens, discards unmapped symbols |
+
+---
+
+### Stage 4 — Intent & Entity Extraction
+
+| Property | Value |
+|---|---|
+| **Modules** | `agent/intent_classifier.py`, `agent/entity_extractor.py` |
+| **Input** | Normalized string |
+| **Output** | `CommandIntent` — intent string, entities dict, confidence score |
+| **Key Classes** | `IntentClassifier`, `EntityExtractor` |
+| **Key Functions** | `classify()`, `extract_entities()`, `rank_intents()` |
+| **Failure Cases** | Sentence matches multiple conflicting patterns |
+| **Recovery** | Splits on conjunctions; returns highest-scoring intent |
+
+---
+
+### Stage 5 — Planning Layer
+
+| Property | Value |
+|---|---|
+| **Modules** | `agentic/llm/manager.py`, `agentic/llm/fallback.py` |
+| **Input** | Transcript string + system discovery context dict |
+| **Output** | `PlannerOutput` — reasoning + list of action steps |
+| **Key Classes** | `PlannerManager` |
+| **Key Functions** | `plan()`, `apply_heuristic_fallback()`, `_inject_context()` |
+| **Failure Cases** | Remote API timeout, JSON schema mismatch |
+| **Recovery** | Activates `apply_heuristic_fallback()` for offline rule-based planning |
+
+---
+
+### Stage 6 — Safety Gate
+
+| Property | Value |
+|---|---|
+| **Modules** | `agentic/tool_registry.py`, `web/confirm_service.py` |
+| **Input** | `PlannerOutput` plan step details |
+| **Output** | Execution permit OR blocked confirmation UUID |
+| **Key Classes** | `PermissionManager`, `PendingActionManager` |
+| **Key Functions** | `check_permissions()`, `handle_confirm()` |
+| **Failure Cases** | User closes browser during a safety block |
+| **Recovery** | Ephemeral confirmation states expire automatically after 60 seconds |
+
+---
+
+### Stage 7 — Execution Engine
+
+| Property | Value |
+|---|---|
+| **Module** | `execution/executor.py` |
+| **Input** | `ExecutionPlan` with action steps (`wait_for`, `timeout`, `requires`) |
+| **Output** | List of step-by-step results with lifecycle states |
+| **Key Classes** | `DesktopExecutor`, `StepRecord`, `ExecutionContext`, `StepStatus` |
+| **Key Functions** | `execute()`, `execute_step()`, `dispatch_wait()`, `dispatch_verify()`, `recover_step()` |
+| **Failure Cases** | App unresponsive, window fails to load, UI focus mismatch |
+| **Recovery** | State machine: screenshot → restore → focus → relaunch → retry (up to `max_retries`, default: 2) |
+
+---
+
+### Stage 8 — Automation Layer
+
+| Property | Value |
+|---|---|
+| **Module** | `automation/*` |
+| **Input** | Execution payload arguments |
+| **Output** | `ExecutionResult` model |
+| **Drivers** | PyAutoGUI, Win32 APIs, Playwright, `subprocess`, `webbrowser` |
+| **Key Functions** | `open_application()`, `open_browser()`, `open_folder()`, `send_whatsapp_message()` |
+| **Failure Cases** | Playwright Chromium locks, OS lock-screen blocks |
+| **Recovery** | Returns failed `ExecutionResult` to trigger executor recovery logic |
+
+</details>
+
+---
+
+## 🔁 Stateful Execution Engine
+
+The execution engine is built around a **state-aware sequential state machine** that validates each action before proceeding to the next step.
 
 ### Step Lifecycle
-
-Every step in the execution plan runs through the following state machine:
 
 ```mermaid
 stateDiagram-v2
@@ -199,54 +381,73 @@ stateDiagram-v2
     FAILURE --> [*]
 ```
 
-- **PENDING**: The step is queued and waiting to run.
-- **EXECUTING**: The step's registered tool handler is actively running.
-- **WAITING**: The engine is polling for a post-execution readiness condition (e.g. process running or window active) before continuing.
-- **VERIFYING**: The engine checks the operating system state to confirm the step's intent was achieved.
-- **RECOVERY**: Verification failed. The recovery engine applies corrective strategies.
-- **RETRY**: The step's tool handler is executed again.
-- **SUCCESS / FAILURE**: Terminal states. If a step reaches `FAILURE`, the remaining steps of the plan are aborted immediately.
+| State | Description |
+|---|---|
+| `PENDING` | Step is queued and waiting to run |
+| `EXECUTING` | Registered tool handler is actively running |
+| `WAITING` | Engine is polling for a post-execution readiness condition |
+| `VERIFYING` | Engine checks OS state to confirm the step's intent was achieved |
+| `RECOVERY` | Verification failed; recovery engine applies corrective strategies |
+| `RETRY` | Tool handler is executed again after recovery |
+| `SUCCESS` | Terminal: step completed successfully |
+| `FAILURE` | Terminal: remaining plan steps are aborted |
 
 ---
 
-### Wait Mechanism
+### Intelligent Wait Utilities
 
-Instead of relying on fixed sleeps (like `time.sleep(2)`), the execution engine uses intelligent wait utilities implemented in [wait_utils.py](file:///d:/ai%20voice%20assisstant/execution/wait_utils.py):
-- `wait_until_process_running(name)`: Polls `psutil` until a process matching the application name appears.
-- `wait_until_window_exists(title)`: Polls window titles using `win32gui` until the window is visible.
-- `wait_until_window_active(title)`: Waits for the target window to become the foreground window.
-- `wait_until_application_ready(name)`: A composite wait (process exists + window exists + window active).
-- `wait_until_element_ready(label)`: Polls coordinate locators until a specific UI element is detected on-screen.
-- `wait_until_browser_loaded()`: Monitors the foreground browser window title and returns when it stops changing (stabilizes).
+Instead of bare `time.sleep()` calls, the engine uses condition-polling primitives from `execution/wait_utils.py`:
 
-Each utility has configurable timeouts and polling intervals.
+| Utility | Condition Polled |
+|---|---|
+| `wait_until_process_running(name)` | `psutil` process list — waits until app appears |
+| `wait_until_window_exists(title)` | `win32gui` — waits until window title is visible |
+| `wait_until_window_active(title)` | Waits for target window to become foreground |
+| `wait_until_application_ready(name)` | Composite: process + window + active |
+| `wait_until_element_ready(label)` | Polls coordinate locators for a specific UI element |
+| `wait_until_browser_loaded()` | Monitors browser window title stability |
+
+Each utility supports configurable **timeouts** and **polling intervals**.
 
 ---
 
 ### Post-Step Verification
 
-After execution (and any optional wait phase), the system performs best-effort OS validation to verify that the step worked:
-- **Application Launches**: Confirms the process is running and has a visible window.
-- **Window Focus**: Confirms the window title matching the target is visible and in the foreground.
-- **Text Typing / Key Presses**: Fire-and-forget keystroke logs (always passes).
-- **Search Inside App**: Verifies that the application window is still active.
+After execution (and any optional wait phase), the system performs best-effort OS validation:
+
+| Tool Type | Verification Method |
+|---|---|
+| Application launch | Process running + visible window confirmed |
+| Window focus | Window title visible and in foreground |
+| Text typing / key press | Fire-and-forget (always passes — keystroke is not inspectable) |
+| Search inside app | Application window still active |
 
 ---
 
 ### Automated Failure Recovery
 
-If a step fails verification, the engine intercepts the failure and attempts recovery in priority order up to `max_retries` (default: 2):
-1. **Debug Screenshot**: Saves a screenshot to `data/` at the point of failure for offline inspection.
-2. **Relaunch Application**: Attempts to re-start the process if it crashed or failed to open.
-3. **Restore Minimized Window**: If the window is minimized or iconic, restores and maximizes it.
-4. **Bring to Foreground**: Re-asserts foreground window focus for the target app.
-5. **Retry Automation**: Re-executes the tool handler directly.
+If a step fails verification, the engine applies recovery strategies in priority order (up to `max_retries = 2`):
+
+```mermaid
+flowchart LR
+    A[Verification Failed] --> B[📸 Debug Screenshot\nSaved to data/]
+    B --> C[🔄 Restore Minimized Window\nif window is iconic]
+    C --> D[🖥️ Bring to Foreground\nre-assert window focus]
+    D --> E{Process\nRunning?}
+    E -->|No| F[🚀 Relaunch Application]
+    E -->|Yes| G[↺ Retry Tool Handler]
+    F --> G
+    G --> H{Succeeded?}
+    H -->|Yes| I([✅ SUCCESS])
+    H -->|No, retries left| B
+    H -->|No, max retries| J([❌ FAILURE])
+```
 
 ---
 
-### Planner Support
+### Planner Step JSON Format
 
-The Qwen-based Planner outputs metadata fields (`wait_for`, `timeout`, `requires`) in each step JSON:
+The planner outputs step metadata fields (`wait_for`, `timeout`, `requires`) that the executor parses and enforces:
 
 ```json
 {
@@ -254,13 +455,13 @@ The Qwen-based Planner outputs metadata fields (`wait_for`, `timeout`, `requires
   "steps": [
     {
       "tool": "launch_application",
-      "args": {"application": "spotify"},
+      "args": { "application": "spotify" },
       "wait_for": "window_ready",
       "timeout": 20
     },
     {
       "tool": "search_inside_application",
-      "args": {"query": "Believer"},
+      "args": { "query": "Believer" },
       "requires": "Spotify Ready"
     }
   ],
@@ -268,393 +469,723 @@ The Qwen-based Planner outputs metadata fields (`wait_for`, `timeout`, `requires
 }
 ```
 
-The executor parses and enforces these fields, ensuring step $N$ does not execute until step $N-1$ has been fully verified and is ready.
+> Step N does not execute until step N-1 has been fully **verified** and declared **ready**.
 
 ---
 
-## # Folder Structure
+## 📁 Folder Structure
 
-- **`agent/`**: Handles local natural language processing (text-to-intent).
-  - *Key Files*: `preprocess.py`, `intent_classifier.py`, `entity_extractor.py`, `command_registry.py`
-  - *Used By*: `web/services.py`
-  - *Output*: `CommandIntent` structures containing normalized semantic tokens.
-- **`agentic/`**: High-level agent routing, LLM planning interfaces, stateful contexts, and discovery tools.
-  - *Key Files*: `llm/manager.py`, `discovery/indexer.py`, `memory/session_state.py`
-  - *Used By*: `web/services.py`, `execution/executor.py`
-  - *Output*: Context parameters, cache registers, background scans, and planned step graphs.
-- **`automation/`**: low-level device drivers and automation clients interfacing with the OS.
-  - *Key Files*: `applications.py`, `browser.py`, `desktop.py`, `filesystem.py`, `whatsapp.py`
-  - *Used By*: `execution/registry.py`
-  - *Output*: Direct UI clicks, keyboard inputs, folder paths, file edits, and Chromium automation.
-- **`execution/`**: Connects action steps to automation tools.
-  - *Key Files*: `executor.py`, `registry.py`, `schemas.py`
-  - *Used By*: `web/services.py`
-  - *Output*: Programmatic step execution logs and step recovery operations.
-- **`storage/`**: Local database layer for history logging.
-  - *Key Files*: `database.py`, `history_manager.py`
-  - *Used By*: `web/routes.py`, `web/confirm_service.py`
-  - *Output*: Persistent SQLite rows of speech and command records.
-- **`stt/`**: Input speech processing.
-  - *Key Files*: `audio_capture.py`, `whisper_engine.py`
-  - *Used By*: `web/services.py`
-  - *Output*: String transcriptions.
-- **`tts/`**: Output response synthesis.
-  - *Key Files*: `manager.py`, `edge_engine.py`, `pyttsx3_engine.py`, `response_generator.py`
-  - *Used By*: `web/services.py`
-  - *Output*: MP3/WAV files played back locally or served to the web UI.
-- **`web/`**: Dashboard frontend and backend REST service endpoints.
-  - *Key Files*: `app.py`, `routes.py`, `services.py`, `confirm_service.py`
-  - *Used By*: Main application runtime entry point.
-  - *Output*: JSON web endpoints and static dashboard rendering.
-- **`tests/`**: Main suite validating system state, intents, memory, and mocks.
-- **`scripts/`**: Development scripts and standalone utility diagnostics.
-
----
-
-## # Module Explanation
-
-### 1. `agent/preprocess.py`
-- **Purpose**: Translates Hinglish to English, fixes typos, and removes punctuation.
-- **Major Classes**: `TextPreprocessor`
-- **Major Functions**: `normalize_text()`, `tokenize()`
-- **Inputs**: Raw string text.
-- **Outputs**: Normalized clean string or token list.
-- **Dependencies**: `re`, `logging`
-- **Called By**: `agent/intent_classifier.py`
-- **Calls Modules**: None
-
-### 2. `agent/intent_classifier.py`
-- **Purpose**: Matches normalized text to intents.
-- **Major Classes**: `IntentClassifier`
-- **Major Functions**: `classify()`, `rank_intents()`
-- **Inputs**: Clean normalized string.
-- **Outputs**: `CommandIntent` structures.
-- **Dependencies**: `re`, `dataclasses`, `agent/command_registry.py`, `agent/entity_extractor.py`
-- **Called By**: `web/services.py`
-- **Calls Modules**: `agent/command_registry`, `agent/entity_extractor`, `agent/preprocess`
-
-### 3. `agent/entity_extractor.py`
-- **Purpose**: Extracts variables from transcripts.
-- **Major Classes**: `EntityExtractor`
-- **Major Functions**: `extract_entities()`
-- **Inputs**: Utterance string and matching intent parameters.
-- **Outputs**: Dict of extracted slot values.
-- **Dependencies**: `logging`, `re`
-- **Called By**: `agent/intent_classifier.py`
-- **Calls Modules**: None
-
-### 4. `agent/command_registry.py`
-- **Purpose**: Configures supported intents, categories, and patterns.
-- **Major Classes**: None
-- **Major Functions**: `get_all_intents()`, `get_intent()`, `list_intent_names()`
-- **Inputs**: None
-- **Outputs**: `IntentDefinition` models.
-- **Dependencies**: `agent/schemas.py`
-- **Called By**: `agent/intent_classifier.py`
-- **Calls Modules**: `agent/schemas`
-
-### 5. `agentic/llm/manager.py`
-- **Purpose**: Manages remote planning requests and offline fallbacks.
-- **Major Classes**: `PlannerManager`
-- **Major Functions**: `plan()`, `_inject_context()`
-- **Inputs**: Transcription string.
-- **Outputs**: `PlannerOutput` plan step models.
-- **Dependencies**: `json`, `requests`, `agentic/llm/fallback.py`, `agentic/discovery/indexer.py`
-- **Called By**: `web/services.py`
-- **Calls Modules**: `agentic/llm/remote_client`, `agentic/llm/fallback`, `agentic/discovery/indexer`, `agentic/memory/session_state`
-
-### 6. `agentic/llm/fallback.py`
-- **Purpose**: Rule-based planner mapping transcriptions to steps when offline.
-- **Major Classes**: None
-- **Major Functions**: `apply_heuristic_fallback()`
-- **Inputs**: Transcript string.
-- **Outputs**: `PlannerOutput` plan steps.
-- **Dependencies**: `re`, `agentic/llm/schemas.py`, `agentic/discovery/manager.py`
-- **Called By**: `agentic/llm/manager.py`
-- **Calls Modules**: `agentic/discovery/manager`, `agentic/memory/session_state`
-
-### 7. `agentic/discovery/indexer.py`
-- **Purpose**: Background daemon scanning and indexing system apps and folders.
-- **Major Classes**: `SystemIndexer`
-- **Major Functions**: `start()`, `stop()`, `scan_and_save()`
-- **Inputs**: File system directory structures.
-- **Outputs**: Caches `system_index.json` resources on disk.
-- **Dependencies**: `threading`, `json`, `agentic/discovery/apps.py`, `agentic/discovery/browser.py`, `agentic/discovery/filesystem.py`
-- **Called By**: `agentic/llm/manager.py`
-- **Calls Modules**: `agentic/discovery/apps`, `agentic/discovery/browser`, `agentic/discovery/filesystem`, `agentic/discovery/processes`
-
-### 8. `agentic/memory/session_state.py`
-- **Purpose**: Session state tracking active applications, contacts, and logs.
-- **Major Classes**: `SessionState`
-- **Major Functions**: `set_context()`, `set_pending_action()`, `add_history()`, `get_session()`
-- **Inputs**: Context variables, raw transcripts, execution results.
-- **Outputs**: Singleton session instance reference.
-- **Dependencies**: `uuid`, `time`, `threading`
-- **Called By**: `web/services.py`, `agentic/llm/manager.py`, `execution/executor.py`, `web/confirm_service.py`
-- **Calls Modules**: None
-
-### 9. `automation/applications.py`
-- **Purpose**: Launches process handles, queries running windows, foregrounds handles.
-- **Major Classes**: None
-- **Major Functions**: `open_application()`, `is_app_running()`, `bring_process_to_foreground()`, `perform_app_action()`
-- **Inputs**: Dict application payloads.
-- **Outputs**: `ExecutionResult` reports.
-- **Dependencies**: `psutil`, `win32gui`, `win32process`, `subprocess`
-- **Called By**: `execution/registry.py`
-- **Calls Modules**: `execution/schemas`
-
-### 10. `automation/browser.py`
-- **Purpose**: Launches web links and web searches.
-- **Major Classes**: None
-- **Major Functions**: `open_browser()`, `search_web()`
-- **Inputs**: Target URL/query payloads.
-- **Outputs**: `ExecutionResult` models.
-- **Dependencies**: `webbrowser`
-- **Called By**: `execution/registry.py`
-- **Calls Modules**: `execution/schemas`
-
-### 11. `automation/filesystem.py`
-- **Purpose**: Creates files/folders, reads content, lists files, deletes targets.
-- **Major Classes**: None
-- **Major Functions**: `create_folder()`, `create_file()`, `list_files()`, `delete_file()`
-- **Inputs**: Filename, directory, or path parameters.
-- **Outputs**: `ExecutionResult` records.
-- **Dependencies**: `os`, `shutil`
-- **Called By**: `execution/registry.py`
-- **Calls Modules**: `execution/schemas`
-
-### 12. `automation/desktop.py`
-- **Purpose**: Low-level keyboard and mouse simulation, screenshot capture, memory check.
-- **Major Classes**: None
-- **Major Functions**: `click()`, `type_text()`, `press_key()`, `take_screenshot()`, `check_memory()`
-- **Inputs**: Coordinates, texts, keys, and file paths.
-- **Outputs**: `ExecutionResult` outputs.
-- **Dependencies**: `pyautogui`, `psutil`
-- **Called By**: `execution/registry.py`
-- **Calls Modules**: `execution/schemas`
-
-### 13. `automation/whatsapp.py`
-- **Purpose**: Automates sending messages on WhatsApp Web.
-- **Major Classes**: None
-- **Major Functions**: `send_whatsapp_message()`
-- **Inputs**: Dict containing contact and message keys.
-- **Outputs**: `ExecutionResult` output status.
-- **Dependencies**: `playwright.sync_api`
-- **Called By**: `execution/registry.py`
-- **Calls Modules**: `execution/schemas`
-
-### 14. `execution/executor.py`
-- **Purpose**: Sequentially executes planned stages.
-- **Major Classes**: `DesktopExecutor`
-- **Major Functions**: `execute_step()`, `execute()`, `_attempt_recovery()`
-- **Inputs**: `ExecutionPlan` tasks.
-- **Outputs**: Array of outcome dictionary logs.
-- **Dependencies**: `time`, `pyautogui`, `agentic/tool_registry.py`, `agentic/memory/session_state.py`
-- **Called By**: `web/services.py`
-- **Calls Modules**: `execution/registry`, `agentic/memory/session_state`, `automation/desktop`
-
-### 15. `execution/registry.py`
-- **Purpose**: Maps string step actions to corresponding automation functions.
-- **Major Classes**: None
-- **Major Functions**: `register_tool()`, `get_handler()`, `load_all_tools()`
-- **Inputs**: Target action string.
-- **Outputs**: Function handler.
-- **Dependencies**: Python import hooks.
-- **Called By**: `execution/executor.py`, `web/confirm_service.py`
-- **Calls Modules**: `automation.*`
-
-### 16. `storage/database.py`
-- **Purpose**: Handles SQLite CRUD operations.
-- **Major Classes**: None
-- **Major Functions**: `init_db()`, `insert_session()`, `get_all_sessions()`, `delete_session()`
-- **Inputs**: Session details dictionaries.
-- **Outputs**: SQL records.
-- **Dependencies**: `sqlite3`, `config.py`
-- **Called By**: `storage/history_manager.py`
-- **Calls Modules**: `config`
-
-### 17. `tts/manager.py`
-- **Purpose**: Coordinates voice response generation using edge-tts or pyttsx3.
-- **Major Classes**: `TTSManager`
-- **Major Functions**: `speak()`
-- **Inputs**: Plain text feedback strings.
-- **Outputs**: `SpeechResult` structures.
-- **Dependencies**: `tts/edge_engine.py`, `tts/pyttsx3_engine.py`
-- **Called By**: `web/services.py`
-- **Calls Modules**: `tts/edge_engine`, `tts/pyttsx3_engine`
+```
+ai-voice-assistant/
+│
+├── 🧠 agent/                          # Local NLP pipeline (text → intent)
+│   ├── preprocess.py                  # Hinglish normalization, tokenization
+│   ├── intent_classifier.py           # Keyword scoring + regex pattern matcher
+│   ├── entity_extractor.py            # Slot parameter extraction
+│   ├── command_registry.py            # Intent definitions and categories
+│   └── schemas.py                     # NLP data models
+│
+├── 🤖 agentic/                        # High-level agent: planning, memory, discovery
+│   ├── llm/
+│   │   ├── manager.py                 # Remote + fallback planner orchestrator
+│   │   ├── fallback.py                # Rule-based offline planner
+│   │   ├── remote_client.py           # OpenAI-compatible API client
+│   │   └── schemas.py                 # Planner output models
+│   ├── discovery/
+│   │   ├── indexer.py                 # Background daemon: scans apps/files/bookmarks
+│   │   ├── apps.py                    # UWP + registry app scanner
+│   │   ├── browser.py                 # Browser bookmark/history extractor
+│   │   └── manager.py                 # Resource resolution router
+│   ├── memory/
+│   │   ├── session_state.py           # Singleton session context tracker
+│   │   ├── app_context.py             # Active app/window state
+│   │   └── pending_action.py          # Confirmation payload manager
+│   ├── conversation/
+│   │   └── confirmation_manager.py    # Multi-turn confirmation flows
+│   ├── permissions.py                 # Safety gate + tool permission checks
+│   └── schemas.py                     # ExecutionPlan, ActionStep models
+│
+├── 🛠 automation/                     # Low-level OS drivers
+│   ├── applications.py                # App launch, window focus, process management
+│   ├── browser.py                     # Web browser + search launcher
+│   ├── desktop.py                     # Keyboard/mouse simulation, screenshots
+│   ├── filesystem.py                  # Folder/file CRUD operations
+│   └── whatsapp.py                    # Playwright WhatsApp Web automation
+│
+├── ⚙️ execution/                      # Step-execution state machine
+│   ├── executor.py                    # Stateful DesktopExecutor lifecycle
+│   ├── registry.py                    # Tool name → handler function map
+│   ├── verifier.py                    # Post-step OS state verification
+│   ├── recovery.py                    # Failure recovery strategy engine
+│   ├── wait_utils.py                  # Intelligent condition-polling primitives
+│   ├── step_state.py                  # StepRecord, StepStatus, ExecutionContext
+│   └── schemas.py                     # ExecutionResult, ExecutionTimer
+│
+├── 🗣 stt/                            # Speech input processing
+│   ├── audio_capture.py               # Microphone recording + silence detection
+│   └── whisper_engine.py              # Faster-Whisper STT engine wrapper
+│
+├── 🔊 tts/                            # Voice response synthesis
+│   ├── manager.py                     # TTSManager: engine selector + coordinator
+│   ├── edge_engine.py                 # Neural Edge-TTS async client
+│   ├── pyttsx3_engine.py              # Offline system TTS fallback
+│   └── response_generator.py         # Execution outcome → natural language
+│
+├── 💾 storage/                        # Persistence layer
+│   ├── database.py                    # SQLite CRUD operations
+│   └── history_manager.py             # Session log manager
+│
+├── 🌐 web/                            # Flask web dashboard + REST API
+│   ├── app.py                         # App factory + server entry point
+│   ├── routes.py                      # REST endpoint definitions
+│   ├── services.py                    # Core voice pipeline orchestration
+│   └── confirm_service.py             # Safety confirmation webhook handler
+│
+├── 🧪 tests/                          # 24-file test suite
+├── 📜 scripts/                        # Dev utilities and diagnostic tools
+├── 📊 data/                           # Recovery screenshots, debug artifacts
+├── 🎵 audio_recordings/               # Captured WAV files
+├── config.py                          # Central configuration (loaded from .env)
+├── .env.example                       # Environment variable template
+└── requirements.txt                   # Pinned Python dependencies
+```
 
 ---
 
-## # Technology Stack
+## 🧩 Module Explanation
 
-The third-party libraries and modules imported by this codebase are outlined below:
+<details>
+<summary><strong>🧠 NLP Agent Layer — click to expand</strong></summary>
 
-- **Python**: Core scripting language used to build the entire system.
-- **Flask**: Lightweight WSGI web framework mapping REST API endpoints and serving the static dashboard interface.
-- **Flask-CORS**: Handles Cross-Origin Resource Sharing (CORS) configurations for API blueprints.
-- **sounddevice**: Interface to PortAudio for microphone monitoring and recording WAV array captures.
-- **scipy**: Utilized for `scipy.io.wavfile` to write raw PCM numpy audio arrays into standard WAV containers.
-- **numpy**: Performs amplitude calculations to track signal levels during voice activity detection.
-- **Faster-Whisper**: Local speech-to-text transcriber leveraging CTranslate2 and transformer quantization.
-- **PyTorch**: Used under the hood by Faster-Whisper to load and compute neural speech models.
-- **requests**: Handles synchronous HTTP POST payloads sent to the remote Colab LLM Planner endpoint.
-- **playwright**: Automates WhatsApp Web through Chromium, enabling hands-free message dispatch.
-- **pyautogui**: Simulates cross-platform keyboard presses, typing actions, mouse clicks, and screenshot sweeps.
-- **pywin32 (win32gui, win32process, win32com)**: Performs low-level Win32 window handles mapping, foreground assertions, and keyboard events.
-- **psutil**: Queries running processes to check if specific applications are running and evaluates RAM usage.
-- **SQLite**: Local relational database handling session histories and log parameters.
-- **Rich**: Terminal formatting and colored log output prints.
-- **pygame**: Provides PCM audio playback wrapper triggers for generated Edge-TTS neural speech audio files.
-- **pyttsx3**: Text-to-speech fallback engine executing offline synthetic speech generation.
-- **edge-tts**: Async client retrieving high-quality neural voice output audio streams from Microsoft.
+### `agent/preprocess.py`
+
+| Field | Detail |
+|---|---|
+| **Purpose** | Translates Hinglish → English, fixes typos, removes punctuation |
+| **Classes** | `TextPreprocessor` |
+| **Functions** | `normalize_text()`, `tokenize()` |
+| **Input** | Raw string text |
+| **Output** | Normalized clean string or token list |
+| **Dependencies** | `re`, `logging` |
+| **Called By** | `agent/intent_classifier.py` |
 
 ---
 
-## # Configuration
+### `agent/intent_classifier.py`
 
-Central system parameters are managed inside [config.py](file:///d:/ai%20voice%20assisstant/config.py) and can be overridden using a local `.env` file:
+| Field | Detail |
+|---|---|
+| **Purpose** | Matches normalized text to named intents via keyword scoring and regex |
+| **Classes** | `IntentClassifier` |
+| **Functions** | `classify()`, `rank_intents()` |
+| **Input** | Clean normalized string |
+| **Output** | `CommandIntent` structures |
+| **Dependencies** | `re`, `dataclasses`, `command_registry`, `entity_extractor` |
+| **Called By** | `web/services.py` |
 
-| Variable | Description | Default Value |
-| :--- | :--- | :--- |
-| `LOG_LEVEL` | Logging verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`) | `"INFO"` |
-| `COLAB_API_URL` | URL of the remote OpenAI-compatible planning server | `"https://evaluator-agreeing-plenty.ngrok-free.dev/plan"` |
-| `COLAB_TIMEOUT` | Network timeout in seconds for planner requests | `120` |
-| `STT_MODEL_ID` | Faster-Whisper model ID hosted on Hugging Face | `"deepdml/faster-whisper-large-v3-turbo-ct2"` |
-| `STT_BEAM_SIZE` | Decode beam size matching Whisper search | `5` |
+---
+
+### `agent/entity_extractor.py`
+
+| Field | Detail |
+|---|---|
+| **Purpose** | Extracts slot variables from transcripts (app names, paths, contacts, queries) |
+| **Classes** | `EntityExtractor` |
+| **Functions** | `extract_entities()` |
+| **Input** | Utterance string + intent parameters |
+| **Output** | Dict of extracted slot values |
+| **Dependencies** | `logging`, `re` |
+| **Called By** | `agent/intent_classifier.py` |
+
+---
+
+### `agent/command_registry.py`
+
+| Field | Detail |
+|---|---|
+| **Purpose** | Defines all supported intents, categories, and regex patterns |
+| **Functions** | `get_all_intents()`, `get_intent()`, `list_intent_names()` |
+| **Output** | `IntentDefinition` models |
+| **Called By** | `agent/intent_classifier.py` |
+
+</details>
+
+<details>
+<summary><strong>🤖 Planning & Discovery Layer — click to expand</strong></summary>
+
+### `agentic/llm/manager.py`
+
+| Field | Detail |
+|---|---|
+| **Purpose** | Orchestrates remote planning requests and offline fallbacks |
+| **Classes** | `PlannerManager` |
+| **Functions** | `plan()`, `_inject_context()` |
+| **Input** | Transcription string |
+| **Output** | `PlannerOutput` plan step models |
+| **Dependencies** | `json`, `requests`, `fallback.py`, `discovery/indexer.py` |
+| **Called By** | `web/services.py` |
+
+---
+
+### `agentic/llm/fallback.py`
+
+| Field | Detail |
+|---|---|
+| **Purpose** | Rule-based planner mapping transcriptions to steps when offline |
+| **Functions** | `apply_heuristic_fallback()` |
+| **Input** | Transcript string |
+| **Output** | `PlannerOutput` plan steps |
+| **Called By** | `agentic/llm/manager.py` |
+
+---
+
+### `agentic/discovery/indexer.py`
+
+| Field | Detail |
+|---|---|
+| **Purpose** | Background daemon scanning and indexing system apps and folders |
+| **Classes** | `SystemIndexer` |
+| **Functions** | `start()`, `stop()`, `scan_and_save()` |
+| **Output** | Caches `system_index.json` on disk |
+| **Scans** | UWP apps, registry, browser bookmarks/history, filesystem |
+| **Called By** | `agentic/llm/manager.py` |
+
+---
+
+### `agentic/memory/session_state.py`
+
+| Field | Detail |
+|---|---|
+| **Purpose** | Singleton session context tracking active apps, contacts, pending actions |
+| **Classes** | `SessionState` |
+| **Functions** | `set_context()`, `set_pending_action()`, `add_history()`, `get_session()` |
+| **Dependencies** | `uuid`, `time`, `threading` |
+| **Called By** | `web/services.py`, `agentic/llm/manager.py`, `execution/executor.py` |
+
+</details>
+
+<details>
+<summary><strong>🛠 Automation Drivers — click to expand</strong></summary>
+
+### `automation/applications.py`
+
+| Field | Detail |
+|---|---|
+| **Purpose** | Launch process handles, enumerate running windows, foreground focus management |
+| **Functions** | `open_application()`, `bring_process_to_foreground()`, `force_focus_window()` |
+| **Dependencies** | `psutil`, `win32gui`, `win32process`, `subprocess` |
+
+---
+
+### `automation/browser.py`
+
+| Field | Detail |
+|---|---|
+| **Purpose** | Launch web links and perform web searches |
+| **Functions** | `open_browser()`, `search_web()` |
+| **Dependencies** | `webbrowser` |
+
+---
+
+### `automation/filesystem.py`
+
+| Field | Detail |
+|---|---|
+| **Purpose** | Create files/folders, read content, list files, delete targets |
+| **Functions** | `create_folder()`, `create_file()`, `list_files()`, `delete_file()` |
+| **Dependencies** | `os`, `shutil` |
+
+---
+
+### `automation/desktop.py`
+
+| Field | Detail |
+|---|---|
+| **Purpose** | Low-level keyboard and mouse simulation, screenshots, memory check |
+| **Functions** | `click()`, `type_text()`, `press_key()`, `take_screenshot()` |
+| **Dependencies** | `pyautogui`, `psutil` |
+
+---
+
+### `automation/whatsapp.py`
+
+| Field | Detail |
+|---|---|
+| **Purpose** | Automate sending messages on WhatsApp Web |
+| **Functions** | `send_whatsapp_message()` |
+| **Dependencies** | `playwright.sync_api` |
+| **Note** | Requires manual QR code login on first run |
+
+</details>
+
+<details>
+<summary><strong>⚙️ Execution Engine — click to expand</strong></summary>
+
+### `execution/executor.py`
+
+| Field | Detail |
+|---|---|
+| **Purpose** | Stateful, sequential plan execution with lifecycle management |
+| **Classes** | `DesktopExecutor` (alias: `SystemExecutor`) |
+| **Functions** | `execute()`, `execute_step()`, `_run_step_lifecycle()`, `_verify_and_recover()` |
+| **Dependencies** | `execution/registry`, `execution/wait_utils`, `execution/verifier`, `execution/recovery` |
+
+---
+
+### `execution/registry.py`
+
+| Field | Detail |
+|---|---|
+| **Purpose** | Maps string step tool names → automation handler functions |
+| **Functions** | `register_tool()`, `get_handler()`, `load_all_tools()` |
+
+---
+
+### `execution/verifier.py`
+
+| Field | Detail |
+|---|---|
+| **Purpose** | Post-step OS state verification (process running + window visible) |
+| **Functions** | `dispatch_verify()`, `verify_application_launched()`, `_enumerate_all_windows()` |
+
+---
+
+### `execution/recovery.py`
+
+| Field | Detail |
+|---|---|
+| **Purpose** | Structured failure recovery: restore → focus → relaunch → retry |
+| **Functions** | `recover_step()`, `bring_to_foreground()`, `restore_minimized_window()`, `relaunch_application()` |
+
+</details>
+
+<details>
+<summary><strong>🗣 STT / TTS / Storage — click to expand</strong></summary>
+
+### `stt/whisper_engine.py`
+
+| Field | Detail |
+|---|---|
+| **Purpose** | Wrap Faster-Whisper for local speech transcription |
+| **Classes** | `WhisperSTT` |
+| **Functions** | `transcribe()` |
+| **GPU** | Auto-detects CUDA; falls back to CPU INT8 |
+
+---
+
+### `tts/manager.py`
+
+| Field | Detail |
+|---|---|
+| **Purpose** | Coordinate voice response using Edge-TTS or Pyttsx3 |
+| **Classes** | `TTSManager` |
+| **Functions** | `speak()` |
+| **Engines** | `edge_engine.py` (neural, online) → `pyttsx3_engine.py` (offline fallback) |
+
+---
+
+### `storage/database.py`
+
+| Field | Detail |
+|---|---|
+| **Purpose** | SQLite CRUD operations for session history |
+| **Functions** | `init_db()`, `insert_session()`, `get_all_sessions()`, `delete_session()` |
+| **Dependencies** | `sqlite3`, `config.py` |
+
+</details>
+
+---
+
+## 🛠 Technology Stack
+
+| Layer | Technology | Purpose |
+|---|---|---|
+| **Language** | ![Python](https://img.shields.io/badge/Python-3776AB?logo=python&logoColor=white) Python 3.10/3.11 | Core scripting language |
+| **Web Framework** | ![Flask](https://img.shields.io/badge/Flask-000000?logo=flask&logoColor=white) Flask + Flask-CORS | REST API endpoints + dashboard |
+| **Speech-to-Text** | Faster-Whisper (CTranslate2) | Local quantized transformer STT |
+| **Deep Learning** | PyTorch | Model inference backend for Whisper |
+| **Audio Capture** | sounddevice + scipy + numpy | Microphone recording + VAD silence detection |
+| **LLM Planning** | OpenAI-compatible REST API | Remote task planning (Colab-hosted) |
+| **Browser Automation** | Playwright (Chromium) | WhatsApp Web + browser control |
+| **Desktop Automation** | PyAutoGUI | Cross-platform keyboard/mouse simulation |
+| **Win32 Integration** | pywin32 (`win32gui`, `win32process`) | Window handle management + focus control |
+| **Process Management** | psutil | Running process queries + memory checks |
+| **Text-to-Speech** | Edge-TTS (neural, async) | High-quality online voice synthesis |
+| **TTS Fallback** | pyttsx3 | Offline system-native speech |
+| **Audio Playback** | pygame | PCM audio playback for TTS output |
+| **Database** | SQLite (stdlib) | Local session history and logs |
+| **Terminal UI** | Rich | Colored log output formatting |
+| **HTTP Client** | requests | Remote planner API calls |
+
+---
+
+## ⚙️ Configuration
+
+All configuration lives in [`config.py`](config.py) and is overridable via a `.env` file:
+
+```bash
+# Copy the template
+copy .env.example .env
+```
+
+| Variable | Description | Default |
+|---|---|---|
+| `LOG_LEVEL` | Logging verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`) | `INFO` |
+| `COLAB_API_URL` | URL of remote OpenAI-compatible planning server | `https://…/plan` |
+| `COLAB_TIMEOUT` | Network timeout for planner requests (seconds) | `120` |
+| `STT_MODEL_ID` | Faster-Whisper model ID on Hugging Face | `deepdml/faster-whisper-large-v3-turbo-ct2` |
+| `STT_BEAM_SIZE` | Decode beam size (higher = more accurate, slower) | `5` |
 | `STT_VAD_FILTER` | Enable VAD filter to strip leading/trailing silence | `True` |
-| `SILENCE_THRESHOLD` | Signal threshold value matching VAD stop | `0.01` |
+| `SILENCE_THRESHOLD` | RMS amplitude threshold for silence detection | `0.01` |
 | `SILENCE_DURATION` | Seconds of silence before recording stops | `2.0` |
+| `STT_USE_REMOTE` | Route transcription to a remote Colab GPU server | `false` |
+| `STT_API_URL` | Remote STT `/transcribe` endpoint URL | `https://…/transcribe` |
+| `STT_API_TIMEOUT` | HTTP timeout for remote STT requests (seconds) | `60` |
 
 ---
 
-## # Installation Guide
+## 🚀 Installation Guide
 
 ### Prerequisites
-- **Operating System**: Windows 10/11
-- **Python Version**: Python 3.10.x or 3.11.x (installed and added to PATH)
-- **Git**: Installed for cloning the repository
 
-### Setup Steps
-1. **Clone the repository**:
-   ```powershell
-   git clone https://github.com/yourusername/ai-voice-assistant.git
-   cd "ai-voice-assistant"
-   ```
-
-2. **Create a virtual environment**:
-   ```powershell
-   python -m venv .venv
-   ```
-
-3. **Activate the virtual environment**:
-   ```powershell
-   .venv\Scripts\activate
-   ```
-
-4. **Install pinned dependencies**:
-   ```powershell
-   pip install -r requirements.txt
-   ```
-
-5. **Install Playwright browser binaries**:
-   ```powershell
-   playwright install chromium
-   ```
-
-6. **Create local environment file**:
-   ```powershell
-   copy .env.example .env
-   ```
-   Modify `.env` to configure your remote planner URL or change logging parameters if necessary.
-
-7. **Run the API & UI server**:
-   ```powershell
-   python -m web.app
-   ```
-   Open your browser and navigate to `http://localhost:5000` to view the active user dashboard.
+| Requirement | Version |
+|---|---|
+| Operating System | Windows 10 or Windows 11 |
+| Python | 3.10.x or 3.11.x (added to PATH) |
+| Git | Any recent version |
+| Microphone | Default audio input device configured in Windows |
 
 ---
 
-### Troubleshooting Windows Setup
+### Setup Steps
 
-#### 1. Pywin32 / DLL Import Failure
-If you receive import errors regarding `win32gui` or `win32process` on startup, force-reinstall `pywin32` inside your virtual environment to register the system DLLs:
+**1. Clone the repository**
+```powershell
+git clone https://github.com/Ashmita1206/AI-VOICE-ASSISSTANT.git
+cd "AI-VOICE-ASSISSTANT"
+```
+
+**2. Create and activate a virtual environment**
+```powershell
+python -m venv .venv
+.venv\Scripts\activate
+```
+
+**3. Install pinned dependencies**
+```powershell
+pip install -r requirements.txt
+```
+
+**4. Install Playwright browser binaries**
+```powershell
+playwright install chromium
+```
+
+**5. Configure environment variables**
+```powershell
+copy .env.example .env
+# Edit .env with your planner URL or logging preferences
+```
+
+**6. Start the server**
+```powershell
+python -m web.app
+```
+
+Open your browser and navigate to **`http://localhost:5000`** to access the dashboard.
+
+---
+
+### 🔧 Troubleshooting
+
+<details>
+<summary><strong>❌ Pywin32 / DLL Import Failure</strong></summary>
+
+If you receive import errors for `win32gui` or `win32process` on startup, force-reinstall `pywin32` to register the system DLLs:
+
 ```powershell
 pip install --force-reinstall pywin32
 ```
 
-#### 2. Sounddevice / PortAudio Missing Device
-If `sounddevice` warns that no input devices are available, ensure that a default microphone is plugged in, active in Windows settings, and not exclusively locked by another program.
+</details>
 
-#### 3. CUDA Setup
-By default, the STT engine checks for GPU drivers. If CUDA is not installed or configured, the system falls back to CPU execution with INT8 quantization, which is functional but slower. To enable GPU acceleration, install CUDA Toolkit 11.x or 12.x matching your PyTorch configuration.
+<details>
+<summary><strong>❌ Sounddevice / PortAudio Missing Device</strong></summary>
 
----
+If `sounddevice` warns that no input devices are available:
+- Ensure a default microphone is plugged in
+- Confirm it is set as the default input device in **Windows Sound Settings**
+- Verify no other application has exclusive lock on the device
 
-## # Usage Examples
+</details>
 
-These voice commands are mapped via preprocessors, intent patterns, and fallback registries:
+<details>
+<summary><strong>❌ CUDA / GPU Setup</strong></summary>
 
-- **Open Browser**: *"Open browser"* or *"Browser kholo"*
-  - Normalizes to: `browser open`
-  - Action Plan: `open_browser()`
-- **Open Downloads Folder**: *"Open downloads"*
-  - Action Plan: `open_folder(path="Downloads")`
-- **Google Search**: *"Search Machine Learning on Google"*
-  - Action Plan: `search_web(query="machine learning", application="google")`
-- **Open YouTube**: *"Open YouTube"*
-  - Action Plan: `open_browser(url="https://youtube.com")`
-- **Create Folder**: *"Create folder called documents"*
-  - Action Plan: `create_folder(name="documents")`
-- **Delete File (Safety Block)**: *"Delete report.pdf"*
-  - Action Plan: `delete_file(path="report.pdf")`
-  - *Pipeline Stage*: Matches a dangerous tool. Safe execution block interrupts. Flask UI prompt displays: *"Are you sure you want to delete report.pdf?"*. Clicking *Proceed* completes deletion.
-- **Open WhatsApp**: *"Open WhatsApp"*
-  - Action Plan: `open_application(application="WhatsApp")`
-- **Send WhatsApp Message**: *"Message Harshita and write hi"*
-  - Action Plan: `send_whatsapp_message(contact="Harshita", message="hi")`
-  - *Pipeline Stage*: Triggers safety confirmation. Once approved, Playwright logs into WhatsApp Web and dispatches the message.
+By default, the STT engine auto-detects GPU drivers. If CUDA is not installed, the system falls back to **CPU execution with INT8 quantization** — functional but slower.
+
+To enable GPU acceleration:
+1. Install **CUDA Toolkit 11.x or 12.x** matching your PyTorch build
+2. Verify with `python -c "import torch; print(torch.cuda.is_available())"`
+
+</details>
 
 ---
 
-## # Testing
+## 💬 Usage Examples
 
-The project contains a comprehensive unit and integration test suite located in [tests/](file:///d:/ai%20voice%20assisstant/tests).
+Each example shows the full pipeline: voice input → planner JSON → tool executed → result.
 
-### What is tested?
-- **NLP Preprocessing & Synonym normalizations**: Validates Hinglish translations, whitespace formatting, and typos correction.
-- **Intent Pattern Matching**: Asserts intent ranking scores, compound command splits, and slot extraction.
-- **Session Memory State & Pending Actions**: Tests confirmation IDs serialization, timeout expirations, and state restoration.
-- **Priority App Discovery**: Validates StartApps PowerShell scanning, indexed files lookup, and UWP matches.
-- **System Executor Recovery Logic**: Mocks failure states and asserts screenshot capture and retry operations.
-- **Web API Endpoints**: Tests Flask routes (`/transcribe`, `/history`, `/speak`, `/confirm`, `/pending`) via client fixtures.
+---
 
-### How to run tests
-To run the complete test suite:
-```powershell
-.venv\Scripts\python -m pytest tests/
+### 🌐 Open Browser
+
+```
+🎤  User says:   "Open browser"  /  "Browser kholo"
+     Normalizes: "browser open"
 ```
 
-To run a specific test suite file:
+**Planner Output:**
+```json
+{
+  "steps": [
+    { "tool": "open_browser", "args": {} }
+  ],
+  "response": "Opening your browser."
+}
+```
+
+**Result:** ✅ Default browser opens
+
+---
+
+### 🔎 Search the Web
+
+```
+🎤  User says:   "Search Machine Learning on Google"
+```
+
+**Planner Output:**
+```json
+{
+  "steps": [
+    {
+      "tool": "search_web",
+      "args": { "query": "Machine Learning", "application": "google" }
+    }
+  ],
+  "response": "Searching for Machine Learning on Google."
+}
+```
+
+**Result:** ✅ Browser opens Google search results for "Machine Learning"
+
+---
+
+### 📂 Open a Folder
+
+```
+🎤  User says:   "Open downloads"
+```
+
+**Planner Output:**
+```json
+{
+  "steps": [
+    { "tool": "open_folder", "args": { "path": "Downloads" } }
+  ]
+}
+```
+
+**Result:** ✅ File Explorer opens the Downloads folder
+
+---
+
+### 🚀 Launch an Application
+
+```
+🎤  User says:   "Open Chrome"
+```
+
+**Planner Output:**
+```json
+{
+  "steps": [
+    {
+      "tool": "launch_application",
+      "args": { "application": "chrome" },
+      "wait_for": "window_ready",
+      "timeout": 15
+    }
+  ],
+  "response": "Launching Chrome."
+}
+```
+
+**Result:** ✅ Chrome launches and is brought to foreground
+
+---
+
+### 🗂 Create a Folder
+
+```
+🎤  User says:   "Create folder called documents"
+```
+
+**Planner Output:**
+```json
+{
+  "steps": [
+    { "tool": "create_folder", "args": { "name": "documents" } }
+  ]
+}
+```
+
+**Result:** ✅ Folder `documents` created in current working directory
+
+---
+
+### 🔒 Delete a File (Safety Gate Triggered)
+
+```
+🎤  User says:   "Delete report.pdf"
+```
+
+**Planner Output:**
+```json
+{
+  "steps": [
+    { "tool": "delete_file", "args": { "path": "report.pdf" } }
+  ]
+}
+```
+
+**Pipeline:** ⚠️ `delete_file` is a **dangerous tool** → Safety gate blocks execution → Web dashboard shows:
+
+> *"Are you sure you want to delete report.pdf?"*  **[Proceed]** | **[Cancel]**
+
+**Result:** ✅ File deleted only after explicit user confirmation — or ❌ cancelled if user clicks Cancel
+
+---
+
+### 💬 Send a WhatsApp Message (Safety Gate Triggered)
+
+```
+🎤  User says:   "Message Harshita and write hi"
+```
+
+**Planner Output:**
+```json
+{
+  "steps": [
+    {
+      "tool": "send_whatsapp_message",
+      "args": { "contact": "Harshita", "message": "hi" }
+    }
+  ]
+}
+```
+
+**Pipeline:** ⚠️ Confirmation required → User approves → Playwright opens WhatsApp Web and sends message
+
+**Result:** ✅ Message delivered to Harshita on WhatsApp Web
+
+---
+
+## 🧪 Testing
+
+The project contains a comprehensive **24-file** test suite in [`tests/`](tests/).
+
+### Test Coverage
+
+| Area | Test Files |
+|---|---|
+| NLP Pipeline | `test_nlp_preprocess.py`, `test_nlp_intent_classifier.py`, `test_nlp_entity_extractor.py`, `test_nlp_pipeline.py`, `test_nlp_schemas.py`, `test_nlp_command_registry.py` |
+| Planning | `test_remote_planner.py` |
+| Memory & Session | `test_memory.py`, `test_confirm_api.py`, `test_confirmation.py` |
+| App Discovery | `test_agentic_discovery.py`, `test_resolution.py` |
+| Execution Engine | `test_stateful_executor.py`, `test_executor.py`, `test_execution_dispatch.py` |
+| Automation | `test_automation.py`, `test_launch_and_confirm.py`, `test_spotify_automation.py`, `test_whatsapp_automation.py` |
+| Permissions | `test_permissions.py`, `test_interrupts.py` |
+| Storage | `test_storage_persistence.py` |
+| TTS | `test_tts.py` |
+| Web API | `test_web_api.py` |
+
+### Running Tests
+
 ```powershell
-.venv\Scripts\python -m pytest tests/test_launch_and_confirm.py
+# Run the full test suite
+.venv\Scripts\python -m pytest tests/ -v
+
+# Run a specific test file
+.venv\Scripts\python -m pytest tests/test_stateful_executor.py -v
+
+# Run with coverage report
+.venv\Scripts\python -m pytest tests/ --cov=. --cov-report=term-missing
 ```
 
 ---
 
-## # Current Limitations
+## ⚠️ Current Limitations
 
-- **Windows OS Dependency**: Low-level window handle calls (`win32gui`), StartApp discovery, and shortcut indexing rely on Windows APIs, preventing native execution on macOS or Linux.
-- **Active UI Focus Required**: PyAutoGUI keyboard simulator dispatches keystrokes and mouse clicks directly to the active foreground screen. If the user clicks away or locks the screen, automated tasks may fail or target the wrong window.
-- **No Visual Reasoning (OCR/Vision)**: The assistant lacks computer vision to analyze on-screen elements. It relies on accessibility trees, active process parameters, and pre-calculated window bounds to determine click targets.
-- **WhatsApp Web login profile**: Automated messaging requires Playwright to share the Chromium configuration folder, which requires a manual QR code login verification on the first run.
-- **Remote Planning dependency**: The default planning engine relies on an active HTTP connection to the external Colab LLM API. The assistant falls back to a rule-based local planner if offline.
+> These are **honest** descriptions of current technical boundaries. No capabilities are exaggerated.
+
+| Limitation | Details |
+|---|---|
+| 🪟 **Windows-only** | Low-level `win32gui` calls, UWP app discovery, and shortcut indexing rely on Windows APIs. macOS/Linux are not supported. |
+| 🖱 **Active UI Focus Required** | PyAutoGUI dispatches keystrokes to the active foreground window. If the user clicks away or locks the screen, automated tasks may fail or target the wrong window. |
+| 👁 **No Visual Reasoning (OCR/Vision)** | The assistant cannot analyze on-screen elements visually. It relies on accessibility trees, process parameters, and pre-calculated window bounds. |
+| 💬 **WhatsApp Web Login** | Automated messaging requires manual QR code login on first run (Playwright shares the Chromium profile folder). |
+| 🌐 **Remote Planner Dependency** | The default planning engine requires an active HTTP connection to the external Colab LLM API. Offline mode uses rule-based fallback only. |
+| 🔗 **Multi-step Workflows** | 🚧 Partially implemented. Sequential execution works but complex inter-step dependencies and branching are not fully tested. Do not rely on this for production multi-step flows. |
 
 ---
 
-## # Future Improvements
+## 🗺 Roadmap
 
-- **Computer Vision & OCR integration**: Process screen frames dynamically to click text labels and buttons in uncooperative UIs without relying on coordinate estimations.
-- **Wake Word Detection**: Integrate a local voice activation listener (e.g. Porcupine or Snowboy) to trigger recording without clicking the dashboard microphone button.
-- **Self-Healing Parameter Resolution**: Implement local self-correcting logic that searches for alternate paths or file extensions if an automation step raises a file-not-found error.
-- **Cross-Platform Compatibility**: Re-write platform-specific drivers (UWP scanners and win32gui handles) using standard Python packages to enable macOS/Linux execution.
+```
+Core Features
+ [x] Faster-Whisper local speech-to-text
+ [x] Hinglish normalization
+ [x] Intent classification + entity extraction
+ [x] Remote LLM planner (OpenAI-compatible)
+ [x] Rule-based fallback planner
+ [x] Safety confirmation gate (web UI)
+ [x] Desktop automation (PyAutoGUI + Win32)
+ [x] Browser automation (Playwright)
+ [x] WhatsApp Web messaging
+ [x] File system management
+ [x] SQLite session history
+ [x] Neural TTS (Edge-TTS) + offline fallback (Pyttsx3)
+ [x] Stateful execution engine (state machine)
+ [x] Automated failure recovery (screenshot, refocus, relaunch)
+ [x] Flask web dashboard
+ [x] Remote STT (Colab GPU server)
+
+In Progress
+ [~] Multi-step execution workflows (partial implementation)
+
+Planned
+ [ ] OCR / Computer Vision (click text labels without coordinates)
+ [ ] Wake word detection (Porcupine / Snowboy)
+ [ ] Self-healing parameter resolution (alternate path search on errors)
+ [ ] Cross-platform support (macOS / Linux drivers)
+ [ ] Voice command history replay
+ [ ] Plugin / tool extension system
+```
+
+---
+
+## 📄 License
+
+This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
+
+---
+
+<div align="center">
+
+**Built with ❤️ for hands-free Windows automation**
+
+⭐ Star this repository if you find it useful!
+
+</div>

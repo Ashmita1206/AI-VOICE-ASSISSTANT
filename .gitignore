@@ -1,36 +1,84 @@
-# Virtual environment
+# =========================
+# Virtual Environment
+# =========================
 .venv/
 venv/
 env/
 
-# Python cache
+# =========================
+# Python
+# =========================
 __pycache__/
 *.py[cod]
 *$py.class
 *.pyo
 
-# Distribution
-dist/
+# =========================
+# Build
+# =========================
 build/
+dist/
 *.egg-info/
 
+# =========================
 # IDE
+# =========================
 .vscode/
 .idea/
 *.swp
 *.swo
 
-# OS
+# =========================
+# Operating System
+# =========================
 .DS_Store
 Thumbs.db
 
-# Environment variables
+# =========================
+# Environment Variables
+# =========================
 .env
 
-# Temporary files
+# =========================
+# Temporary Files
+# =========================
 tempCodeRunnerFile.*
 
-# Model cache (large files)
+# =========================
+# AI Models
+# =========================
 models/
 *.bin
 *.pt
+
+# =========================
+# Generated Audio
+# =========================
+web/static/audio/
+
+# =========================
+# Database
+# =========================
+data/*.db
+
+# =========================
+# Cache
+# =========================
+cache/
+
+# =========================
+# Recovery Images
+# =========================
+data/recovery_*.png
+
+# =========================
+# Logs
+# =========================
+*.log
+
+# =========================
+# Jupyter Checkpoints
+# =========================
+.ipynb_checkpoints/
+
+.gemini/cache/system_index.json
