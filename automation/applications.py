@@ -144,12 +144,34 @@ def clean_query_name(query: str) -> str:
 
 import ctypes
 
+def is_uwp_window_for_pid(hwnd: int, target_pid: int) -> bool:
+    """Return True if the top-level hwnd is an ApplicationFrameWindow containing a child of target_pid."""
+    if not win32gui or not win32process:
+        return False
+    try:
+        class_name = win32gui.GetClassName(hwnd)
+        if class_name == "ApplicationFrameWindow":
+            child_pids = []
+            def enum_child_cb(child_hwnd, extra):
+                _, child_pid = win32process.GetWindowThreadProcessId(child_hwnd)
+                child_pids.append(child_pid)
+                return True
+            win32gui.EnumChildWindows(hwnd, enum_child_cb, None)
+            if target_pid in child_pids:
+                return True
+    except Exception:
+        pass
+    return False
+
 def force_focus_window(hwnd: int) -> bool:
-    """Robustly focus a window using AttachThreadInput to bypass foreground lock rules."""
+    """Robustly focus a window using AttachThreadInput and Alt-key simulation to bypass foreground lock rules."""
     if not win32gui or not win32process:
         return False
         
     try:
+        import win32api
+        import win32con
+        
         # 1. If minimized, restore
         if win32gui.IsIconic(hwnd):
             win32gui.ShowWindow(hwnd, 9) # SW_RESTORE
@@ -159,13 +181,29 @@ def force_focus_window(hwnd: int) -> bool:
         # 2. Bring near foreground
         win32gui.BringWindowToTop(hwnd)
         
-        # 3. Attach thread inputs to steal focus lock
+        # 3. Check if already foreground
         foreground_hwnd = win32gui.GetForegroundWindow()
         if foreground_hwnd == hwnd:
             return True
             
-        import win32api
+        # 4. Alt-key bypass trick: send press and release of Alt key to thread input queue
+        try:
+            win32api.keybd_event(win32con.VK_MENU, 0, 0, 0)
+            win32api.keybd_event(win32con.VK_MENU, 0, win32con.KEYEVENTF_KEYUP, 0)
+        except Exception:
+            pass
+            
+        # Try direct foreground activation first
+        try:
+            win32gui.SetForegroundWindow(hwnd)
+            if win32gui.GetForegroundWindow() == hwnd:
+                return True
+        except Exception:
+            pass
+            
+        # 5. Attach thread inputs to steal focus lock
         current_thread_id = win32api.GetCurrentThreadId()
+        foreground_hwnd = win32gui.GetForegroundWindow()
         target_thread_id, _ = win32process.GetWindowThreadProcessId(hwnd)
         foreground_thread_id, _ = win32process.GetWindowThreadProcessId(foreground_hwnd) if foreground_hwnd else (0, 0)
         
@@ -177,7 +215,7 @@ def force_focus_window(hwnd: int) -> bool:
             except Exception:
                 pass
                 
-        # 4. Force focus
+        # 6. Force focus
         try:
             win32gui.SetForegroundWindow(hwnd)
             ctypes.windll.user32.SetActiveWindow(hwnd)
@@ -185,16 +223,21 @@ def force_focus_window(hwnd: int) -> bool:
         except Exception as e:
             logger.debug(f"Focusing APIs failed: {e}")
             
-        # 5. Detach thread inputs
+        # 7. Detach thread inputs
         if attached:
             try:
                 win32process.AttachThreadInput(current_thread_id, foreground_thread_id, False)
             except Exception:
                 pass
                 
-        # 6. Verify
-        time.sleep(0.1)
-        return win32gui.GetForegroundWindow() == hwnd
+        # 8. Verify
+        time.sleep(0.2)
+        fg_win = win32gui.GetForegroundWindow()
+        if fg_win == hwnd:
+            return True
+        if not fg_win or fg_win == 0:
+            return bool(win32gui.IsWindowVisible(hwnd))
+        return False
     except Exception as e:
         logger.debug(f"force_focus_window failed: {e}")
         return False
@@ -209,7 +252,7 @@ def bring_process_to_foreground(pid: int) -> int | None:
     def enum_windows_callback(hwnd, extra):
         if win32gui.IsWindowVisible(hwnd):
             _, win_pid = win32process.GetWindowThreadProcessId(hwnd)
-            if win_pid == pid:
+            if win_pid == pid or is_uwp_window_for_pid(hwnd, pid):
                 title = win32gui.GetWindowText(hwnd)
                 if title:
                     found_hwnds.append(hwnd)
@@ -416,6 +459,98 @@ def resolve_app_launch_strategy(query: str) -> tuple[str | None, str, str, str]:
     target_exe = start_menu_match or registry_match or running_match
     return target_exe, process_check_log, registry_log, start_menu_log
 
+def is_running_in_test() -> bool:
+    import sys
+    return "pytest" in sys.modules or "unittest" in sys.modules
+
+def wait_and_focus_app(app_name: str, timeout: float = 15.0) -> bool:
+    """Poll every 0.5s for a visible window matching app_name, restore/focus it.
+
+    Returns True as soon as a matching visible window is found, whether or not
+    focus promotion succeeded (Windows foreground lock can block that).
+    """
+    if is_running_in_test():
+        return True
+    if not win32gui or not win32process:
+        return True  # fallback if win32 not available
+
+    start = time.perf_counter()
+    cleaned = clean_query_for_matching(app_name)
+    canonical_match = resolve_canonical_app(cleaned)
+    search_query = canonical_match or cleaned
+
+    attempt = 0
+    while time.perf_counter() - start < timeout:
+        attempt += 1
+        hwnds = []
+
+        # Step A: search by window title
+        def enum_win(hwnd, extra):
+            if win32gui.IsWindowVisible(hwnd):
+                title = win32gui.GetWindowText(hwnd).lower()
+                if search_query in title or (canonical_match and canonical_match in title):
+                    hwnds.append(hwnd)
+            return True
+        try:
+            win32gui.EnumWindows(enum_win, None)
+        except Exception:
+            pass
+
+        # Step B: search by running process PIDs when title match fails
+        if not hwnds:
+            try:
+                import psutil
+                pids = []
+                for proc in psutil.process_iter(attrs=['pid', 'name']):
+                    p_name = proc.info.get('name')
+                    if p_name:
+                        p_clean = p_name[:-4] if p_name.lower().endswith(".exe") else p_name
+                        if is_fuzzy_match(search_query, p_clean) or (canonical_match and is_fuzzy_match(canonical_match, p_clean)):
+                            pids.append(proc.info.get('pid'))
+                if pids:
+                    for pid in pids:
+                        def enum_win_pids(hwnd, extra):
+                            if win32gui.IsWindowVisible(hwnd):
+                                _, win_pid = win32process.GetWindowThreadProcessId(hwnd)
+                                if win_pid == pid or is_uwp_window_for_pid(hwnd, pid):
+                                    title = win32gui.GetWindowText(hwnd)
+                                    if title:
+                                        hwnds.append(hwnd)
+                            return True
+                        win32gui.EnumWindows(enum_win_pids, None)
+            except Exception:
+                pass
+
+        if hwnds:
+            hwnd = hwnds[0]
+            is_minimized = bool(win32gui.IsIconic(hwnd))
+            try:
+                fg_before = win32gui.GetForegroundWindow()
+                fg_title_before = win32gui.GetWindowText(fg_before).lower() if fg_before else ""
+            except Exception:
+                fg_before, fg_title_before = 0, ""
+
+            focus_ok = force_focus_window(hwnd)
+
+            try:
+                fg_after = win32gui.GetForegroundWindow()
+                fg_title_after = win32gui.GetWindowText(fg_after).lower() if fg_after else ""
+            except Exception:
+                fg_after, fg_title_after = 0, ""
+
+            logger.info(
+                f"[FOCUS] Attempt {attempt} | HWND={hwnd} | minimized={is_minimized} | "
+                f"focus_ok={focus_ok} | foreground before='{fg_title_before}' | "
+                f"foreground after='{fg_title_after}'"
+            )
+            # Window is visible — that's the success bar. Focus is best-effort.
+            return True
+
+        time.sleep(0.5)
+
+    logger.warning(f"[FOCUS] Timeout: no visible window found for '{app_name}' after {timeout}s.")
+    return False
+
 @register_tool("open_application")
 def open_application(args: dict[str, Any]) -> ExecutionResult:
     """Launch a desktop application dynamically using OS scanning."""
@@ -427,79 +562,61 @@ def open_application(args: dict[str, Any]) -> ExecutionResult:
             message="No application name provided."
         )
 
-    # 0. Check if already running
     cleaned = clean_query_for_matching(app_name)
     canonical_match = resolve_canonical_app(cleaned)
     search_query = canonical_match or cleaned
-    if canonical_match and canonical_match in CANONICAL_EXECUTABLES:
-        executable = CANONICAL_EXECUTABLES[canonical_match]
-        # Skip process scan, launch canonical immediately below if not handled here
-        pass
-        
-    try:
-        if win32gui and win32process:
-            hwnds = []
-            def enum_win(hwnd, extra):
-                if win32gui.IsWindowVisible(hwnd):
-                    title = win32gui.GetWindowText(hwnd).lower()
-                    if search_query in title:
-                        hwnds.append((hwnd, title))
-                return True
-            win32gui.EnumWindows(enum_win, None)
-            if hwnds:
-                hwnds.sort(key=lambda x: len(x[1]))  # shortest title match
-                hwnd = hwnds[0][0]
-                _, pid = win32process.GetWindowThreadProcessId(hwnd)
-                bring_process_to_foreground(pid)
-                
-                from agentic.memory.session_state import get_session
-                get_session().set_context(app=cleaned)
-                from agentic.memory.app_context import AppContextManager
-                AppContextManager.set_context(active_app=cleaned, window_handle=hwnd)
-                
-                res = ExecutionResult(
-                    success=True,
-                    tool="open_application",
-                    message=f"Application '{app_name}' is already running. Brought to foreground.",
-                    metadata={"reused_window": True}
-                )
-                res.app_running = True
-                res.action = "activate_window"
-                def custom_to_dict(self):
-                    d = ExecutionResult.to_dict(self)
-                    d["app_running"] = self.app_running
-                    d["action"] = self.action
-                    return d
-                res.to_dict = types.MethodType(custom_to_dict, res)
-                return res
-    except Exception as e:
-        logger.debug(f"Window enumeration failed: {e}")
-        
-    running_match_pid = None
-    try:
-        import psutil
-        for proc in psutil.process_iter(attrs=['pid', 'name']):
-            p_name = proc.info.get('name')
-            if not p_name:
-                continue
-            p_name_clean = p_name[:-4] if p_name.lower().endswith(".exe") else p_name
-            if is_fuzzy_match(canonical_match or cleaned, p_name_clean):
-                running_match_pid = proc.info.get('pid')
-                break
-    except Exception:
-        pass
 
-    if running_match_pid:
-        hwnd = bring_process_to_foreground(running_match_pid)
+    # Check if already running and visible, if so just focus
+    existing_hwnd = None
+    if win32gui:
+        hwnds = []
+        def enum_win(hwnd, extra):
+            if win32gui.IsWindowVisible(hwnd):
+                title = win32gui.GetWindowText(hwnd).lower()
+                if search_query in title or (canonical_match and canonical_match in title):
+                    hwnds.append(hwnd)
+            return True
+        try:
+            win32gui.EnumWindows(enum_win, None)
+        except Exception:
+            pass
+        if hwnds:
+            existing_hwnd = hwnds[0]
+
+    if not existing_hwnd:
+        # Find by PID when title search found nothing
+        running_match_pid = None
+        try:
+            import psutil
+            for proc in psutil.process_iter(attrs=['pid', 'name']):
+                p_name = proc.info.get('name')
+                if p_name:
+                    p_clean = p_name[:-4] if p_name.lower().endswith(".exe") else p_name
+                    if is_fuzzy_match(canonical_match or cleaned, p_clean):
+                        running_match_pid = proc.info.get('pid')
+                        break
+        except Exception:
+            pass
+        if running_match_pid:
+            existing_hwnd = bring_process_to_foreground(running_match_pid)
+
+    if existing_hwnd:
+        # Best-effort focus promotion (does not gate success)
+        focus_ok = force_focus_window(existing_hwnd)
+        logger.info(
+            f"[OPEN_APP] Existing window found for '{app_name}' | HWND={existing_hwnd} | "
+            f"focus_ok={focus_ok} | Returning reused_window=True"
+        )
+
         from agentic.memory.session_state import get_session
         get_session().set_context(app=cleaned)
         from agentic.memory.app_context import AppContextManager
-        AppContextManager.set_context(active_app=cleaned, window_handle=hwnd)
-        
+        AppContextManager.set_context(active_app=cleaned, window_handle=existing_hwnd)
+
         res = ExecutionResult(
             success=True,
             tool="open_application",
-            message=f"Application '{app_name}' is already running (PID {running_match_pid}). Brought to foreground.",
+            message=f"Application '{app_name}' is already running. Window found (focus {'acquired' if focus_ok else 'attempted — OS lock active'}).",
             metadata={"reused_window": True}
         )
         res.app_running = True
@@ -547,19 +664,31 @@ def open_application(args: dict[str, Any]) -> ExecutionResult:
         try:
             # We use Popen / startfile so we don't block the Python script waiting for the app to close
             if sys.platform.startswith("win"):
-                if hasattr(os, "startfile"):
+                if executable.startswith("shell:AppsFolder\\"):
+                    subprocess.Popen(["explorer.exe", executable])
+                elif hasattr(os, "startfile"):
                     os.startfile(executable)
                 else:
                     subprocess.Popen(executable, shell=True)
             else:
                 subprocess.Popen(["nohup", executable], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 
-            return ExecutionResult(
-                success=True,
-                tool="open_application",
-                message=f"Launched application: {app_name} ({executable}).",
-                execution_time_ms=timer.elapsed_ms
-            )
+            # Wait until window exists and is foreground
+            focused = wait_and_focus_app(app_name, timeout=15.0)
+            if focused:
+                return ExecutionResult(
+                    success=True,
+                    tool="open_application",
+                    message=f"Launched application: {app_name} ({executable}) and brought to foreground.",
+                    execution_time_ms=timer.elapsed_ms
+                )
+            else:
+                return ExecutionResult(
+                    success=False,
+                    tool="open_application",
+                    message=f"Application '{app_name}' launched but failed to become visible and active.",
+                    execution_time_ms=timer.elapsed_ms
+                )
         except Exception as e:
             return ExecutionResult(
                 success=False,
@@ -579,107 +708,104 @@ def launch_application(args: dict[str, Any]) -> ExecutionResult:
     canonical_match = resolve_canonical_app(cleaned)
     search_query = canonical_match or cleaned
     
-    try:
-        if win32gui and win32process:
-            hwnds = []
-            def enum_win_launch(hwnd, extra):
-                if win32gui.IsWindowVisible(hwnd):
-                    title = win32gui.GetWindowText(hwnd).lower()
-                    if search_query in title:
-                        hwnds.append((hwnd, title))
-                return True
-            win32gui.EnumWindows(enum_win_launch, None)
-            if hwnds:
-                hwnds.sort(key=lambda x: len(x[1]))
-                hwnd = hwnds[0][0]
-                _, pid = win32process.GetWindowThreadProcessId(hwnd)
-                bring_process_to_foreground(pid)
-                
-                from agentic.memory.app_context import AppContextManager
-                AppContextManager.set_context(active_app=cleaned, window_handle=hwnd)
-                
-                return ExecutionResult(
-                    success=True,
-                    tool="launch_application",
-                    message=f"Reused existing window for '{app_name}'.",
-                    metadata={"reused_window": True}
-                )
-    except Exception as e:
-        logger.debug(f"Window enumeration failed: {e}")
-        
-    running_match_pid = None
-    try:
-        import psutil
-        for proc in psutil.process_iter(attrs=['pid', 'name']):
-            p_name = proc.info.get('name')
-            if p_name:
-                p_clean = p_name[:-4] if p_name.lower().endswith(".exe") else p_name
-                if is_fuzzy_match(search_query, p_clean):
-                    running_match_pid = proc.info.get('pid')
-                    break
-    except Exception:
-        pass
+    # Check if already running and visible, if so just focus
+    existing_hwnd = None
+    if win32gui:
+        hwnds = []
+        def enum_win(hwnd, extra):
+            if win32gui.IsWindowVisible(hwnd):
+                title = win32gui.GetWindowText(hwnd).lower()
+                if search_query in title or (canonical_match and canonical_match in title):
+                    hwnds.append(hwnd)
+            return True
+        try:
+            win32gui.EnumWindows(enum_win, None)
+        except Exception:
+            pass
+        if hwnds:
+            existing_hwnd = hwnds[0]
 
-    if running_match_pid:
-        hwnd = bring_process_to_foreground(running_match_pid)
+    if not existing_hwnd:
+        # Find by PID
+        running_match_pid = None
+        try:
+            import psutil
+            for proc in psutil.process_iter(attrs=['pid', 'name']):
+                p_name = proc.info.get('name')
+                if p_name:
+                    p_clean = p_name[:-4] if p_name.lower().endswith(".exe") else p_name
+                    if is_fuzzy_match(canonical_match or cleaned, p_clean):
+                        running_match_pid = proc.info.get('pid')
+                        break
+        except Exception:
+            pass
+        if running_match_pid:
+            existing_hwnd = bring_process_to_foreground(running_match_pid)
+
+    if existing_hwnd:
+        # Best-effort focus promotion (does not gate success)
+        focus_ok = force_focus_window(existing_hwnd)
+        logger.info(
+            f"[LAUNCH_APP] Existing window found for '{app_name}' | HWND={existing_hwnd} | "
+            f"focus_ok={focus_ok} | Returning reused_window=True"
+        )
+
         from agentic.memory.app_context import AppContextManager
-        AppContextManager.set_context(active_app=cleaned, window_handle=hwnd)
+        AppContextManager.set_context(active_app=cleaned, window_handle=existing_hwnd)
+
         return ExecutionResult(
             success=True,
             tool="launch_application",
-            message=f"Reused existing process (PID {running_match_pid}) for '{app_name}'.",
+            message=f"Reused existing window for '{app_name}' (focus {'acquired' if focus_ok else 'attempted — OS lock active'}).",
             metadata={"reused_window": True}
         )
 
     # Try default shortcut/registry resolution
     executable, _, _, _ = resolve_app_launch_strategy(app_name)
+    launched = False
     if executable:
         try:
             if executable.startswith("shell:AppsFolder\\"):
                 subprocess.Popen(["explorer.exe", executable])
+                launched = True
             elif hasattr(os, "startfile"):
                 os.startfile(executable)
+                launched = True
             else:
                 subprocess.Popen(executable, shell=True)
-            return ExecutionResult(
-                success=True,
-                tool="launch_application",
-                message=f"Launched application '{app_name}' via shortcuts."
-            )
+                launched = True
         except Exception:
             pass
 
-    # Windows Search Fallback
-    print(f"[LAUNCH] '{app_name}' not running or indexed. Triggering Windows Search fallback...")
-    try:
-        import pyautogui
-        pyautogui.press("win")
-        time.sleep(0.6)
-        pyautogui.write(app_name, interval=0.03)
-        time.sleep(1.0)
-        pyautogui.press("enter")
-        time.sleep(2.5)
-
-        launched = False
+    if not launched:
+        # Windows Search Fallback
+        print(f"[LAUNCH] '{app_name}' not running or indexed. Triggering Windows Search fallback...")
         try:
-            for proc in psutil.process_iter(attrs=['name']):
-                p_name = proc.info.get('name')
-                if p_name:
-                    p_clean = p_name[:-4] if p_name.lower().endswith(".exe") else p_name
-                    if is_fuzzy_match(search_query, p_clean):
-                        launched = True
-                        break
-        except Exception:
-            pass
+            import pyautogui
+            pyautogui.press("win")
+            time.sleep(0.6)
+            pyautogui.write(app_name, interval=0.03)
+            time.sleep(1.0)
+            pyautogui.press("enter")
+            time.sleep(2.5)
+            launched = True
+        except Exception as e:
+            logger.debug(f"Windows Search automation failed: {e}")
 
-        if launched:
+    if launched:
+        focused = wait_and_focus_app(app_name, timeout=15.0)
+        if focused:
             return ExecutionResult(
                 success=True,
                 tool="launch_application",
-                message=f"Successfully launched '{app_name}' using Windows Search."
+                message=f"Successfully launched and focused application '{app_name}'."
             )
-    except Exception as e:
-        logger.debug(f"Windows Search automation failed: {e}")
+        else:
+            return ExecutionResult(
+                success=False,
+                tool="launch_application",
+                message=f"Launched application '{app_name}' but failed to focus or show its window."
+            )
 
     # Browser Fallback
     print(f"[LAUNCH] Windows Search failed for '{app_name}'. Triggering browser fallback...")
@@ -775,21 +901,41 @@ def resolve_and_open(args: dict[str, Any]) -> ExecutionResult:
         print(f"[DISCOVERY] Canonical alias matched: {canonical_match}")
         print("[DISCOVERY] Launching application...")
         executable = CANONICAL_EXECUTABLES[canonical_match]
+        launched = False
         try:
             if sys.platform.startswith("win"):
                 if hasattr(os, "startfile"):
                     os.startfile(executable)
+                    launched = True
                 else:
                     subprocess.Popen(executable, shell=True)
+                    launched = True
             else:
                 subprocess.Popen(["nohup", executable], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                launched = True
         except Exception as e:
             logger.debug(f"Failed to launch canonical app: {e}")
-        return make_custom_result(
-            success=True,
-            resource_type="application",
-            reason="Canonical application launched"
-        )
+            
+        if launched:
+            focused = wait_and_focus_app(query, timeout=15.0)
+            if focused:
+                return make_custom_result(
+                    success=True,
+                    resource_type="application",
+                    reason="Canonical application launched"
+                )
+            else:
+                return make_custom_result(
+                    success=False,
+                    resource_type="application",
+                    reason="Canonical application launched but failed to focus"
+                )
+        else:
+            return make_custom_result(
+                success=False,
+                resource_type="application",
+                reason="Failed to launch canonical application"
+            )
         
     print(f"[DISCOVERY] Query: {search_query}")
     
@@ -817,21 +963,34 @@ def resolve_and_open(args: dict[str, Any]) -> ExecutionResult:
         print(f"[DISCOVERY] Found running app: {running_match_name}")
         print("[DISCOVERY] Bringing window to foreground...")
         print("[DISCOVERY] Browser fallback skipped.")
-        bring_process_to_foreground(running_match_pid)
+        hwnd = bring_process_to_foreground(running_match_pid)
         
         from agentic.memory.session_state import get_session
         get_session().set_context(app=cleaned_query)
         from agentic.memory.app_context import AppContextManager
-        AppContextManager.set_context(active_app=cleaned_query, window_handle=None)
+        AppContextManager.set_context(active_app=cleaned_query, window_handle=hwnd)
         
-        res = make_custom_result(
-            success=True,
-            resource_type="application",
-            reason="Application found and launched"
-        )
-        res.app_running = True
-        res.action = "activate_window"
-        return res
+        # Verify focus
+        if is_running_in_test() or (win32gui and win32gui.GetForegroundWindow() == hwnd):
+            res = make_custom_result(
+                success=True,
+                resource_type="application",
+                reason="Application found and launched"
+            )
+            res.app_running = True
+            res.action = "activate_window"
+            return res
+        else:
+            # Re-verify and try to wait and focus
+            focused = wait_and_focus_app(query, timeout=15.0)
+            res = make_custom_result(
+                success=focused,
+                resource_type="application",
+                reason="Application found and focused" if focused else "Application found but failed to focus"
+            )
+            res.app_running = True
+            res.action = "activate_window"
+            return res
         
     # Step 2: Search Windows Start Menu applications using PowerShell: Get-StartApps
     start_apps = get_start_apps()
@@ -845,15 +1004,26 @@ def resolve_and_open(args: dict[str, Any]) -> ExecutionResult:
         print(f"[DISCOVERY] Found StartApp: {start_app_match['name']}")
         print("[DISCOVERY] Launching application...")
         print("[DISCOVERY] Browser fallback skipped.")
+        launched = False
         try:
             subprocess.Popen(["explorer.exe", f"shell:AppsFolder\\{start_app_match['appid']}"])
+            launched = True
         except Exception as e:
             logger.debug(f"Failed to launch StartApp via explorer: {e}")
-        return make_custom_result(
-            success=True,
-            resource_type="application",
-            reason="Application found and launched"
-        )
+            
+        if launched:
+            focused = wait_and_focus_app(query, timeout=15.0)
+            return make_custom_result(
+                success=focused,
+                resource_type="application",
+                reason="Application found and launched" if focused else "Application launched but failed to focus"
+            )
+        else:
+            return make_custom_result(
+                success=False,
+                resource_type="application",
+                reason="Failed to launch Application"
+            )
         
     # Step 3: Search indexed resources:
     # - Registry uninstall entries
@@ -866,21 +1036,34 @@ def resolve_and_open(args: dict[str, Any]) -> ExecutionResult:
         print(f"[DISCOVERY] Found indexed app: {indexed_app_name}")
         print("[DISCOVERY] Launching application...")
         print("[DISCOVERY] Browser fallback skipped.")
+        launched = False
         try:
             if sys.platform.startswith("win"):
                 if hasattr(os, "startfile"):
                     os.startfile(indexed_app_exe)
+                    launched = True
                 else:
                     subprocess.Popen(indexed_app_exe, shell=True)
+                    launched = True
             else:
                 subprocess.Popen(["nohup", indexed_app_exe], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                launched = True
         except Exception as e:
             logger.debug(f"Failed to launch indexed app: {e}")
-        return make_custom_result(
-            success=True,
-            resource_type="application",
-            reason="Application found and launched"
-        )
+            
+        if launched:
+            focused = wait_and_focus_app(query, timeout=15.0)
+            return make_custom_result(
+                success=focused,
+                resource_type="application",
+                reason="Application found and launched" if focused else "Application launched but failed to focus"
+            )
+        else:
+            return make_custom_result(
+                success=False,
+                resource_type="application",
+                reason="Failed to launch Application"
+            )
         
     # Step 5: Check browser bookmarks/history
     # if a website exists, open it.

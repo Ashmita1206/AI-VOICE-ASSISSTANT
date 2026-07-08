@@ -59,8 +59,8 @@ FEW_SHOT_EXAMPLES = [
     {
       "tool": "launch_application",
       "args": {"application": "chrome"},
-      "wait_for": "window_ready",
-      "timeout": 20
+      "wait_for": "ui_ready",
+      "timeout": 60
     },
     {
       "tool": "search_inside_application",
@@ -83,8 +83,8 @@ FEW_SHOT_EXAMPLES = [
     {
       "tool": "launch_application",
       "args": {"application": "whatsapp"},
-      "wait_for": "window_ready",
-      "timeout": 20
+      "wait_for": "ui_ready",
+      "timeout": 60
     },
     {
       "tool": "search_inside_application",
@@ -118,8 +118,8 @@ FEW_SHOT_EXAMPLES = [
     {
       "tool": "launch_application",
       "args": {"application": "spotify"},
-      "wait_for": "window_ready",
-      "timeout": 25,
+      "wait_for": "ui_ready",
+      "timeout": 60,
       "requires": null
     },
     {

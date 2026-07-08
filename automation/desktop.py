@@ -530,42 +530,435 @@ def search_inside_application(args: dict[str, Any]) -> ExecutionResult:
             pass
 
     try:
-        if "whatsapp" in app or "whatsapp" in window_title:
-            coords = estimate_ui_coordinates("search", "whatsapp")
-            if coords:
-                logger.info(f"[WHATSAPP] Clicking estimated search coordinates: {coords}")
-                pyautogui.click(coords[0], coords[1])
+        # Determine if we should perform a WhatsApp search
+        is_whatsapp = (
+            "whatsapp" in app
+            or "whatsapp" in window_title
+            or args.get("application", "").lower() == "whatsapp"
+            or args.get("app", "").lower() == "whatsapp"
+        )
+        if not is_whatsapp:
+            try:
+                from agentic.memory.session_state import get_session
+                session = get_session()
+                if session.last_active_app == "whatsapp":
+                    is_whatsapp = True
+            except Exception:
+                pass
+
+        if is_whatsapp:
+            try:
+                import uiautomation as auto
+                
+                # Scoring helper (Step 3)
+                def score_control(control, window_rect) -> int:
+                    # Ignore hidden/offscreen controls
+                    try:
+                        if control.IsOffscreen:
+                            return -1
+                        rect = control.BoundingRectangle
+                        if not rect or (rect.right - rect.left) <= 0 or (rect.bottom - rect.top) <= 0:
+                            return -1
+                    except Exception:
+                        return -1
+
+                    score = 0
+                    name = (control.Name or "").lower()
+                    auto_id = (control.AutomationId or "").lower()
+                    help_text = (control.HelpText or "").lower()
+                    
+                    description = ""
+                    try:
+                        description = getattr(control, "Description", "") or ""
+                    except Exception:
+                        pass
+                    description = (description or "").lower()
+
+                    # +100 if placeholder contains Search
+                    if "search" in help_text or "search" in description:
+                        score += 100
+                    # +50 if Name contains Search
+                    if "search" in name:
+                        score += 50
+                    # +30 if inside left sidebar
+                    if window_rect:
+                        win_width = window_rect.right - window_rect.left
+                        if rect.right < window_rect.left + int(win_width * 0.45):
+                            score += 30
+                    # +20 if visible (not offscreen)
+                    if not control.IsOffscreen:
+                        score += 20
+                    # +20 if enabled
+                    if control.IsEnabled:
+                        score += 20
+                    # +10 if keyboard focusable
+                    if control.IsKeyboardFocusable:
+                        score += 10
+                    return score
+
+                # Element finder (Step 2 - recursive search without fixed hierarchy or hardcoded class names)
+                def find_whatsapp_search_control(parent_control) -> Optional[Any]:
+                    window_rect = parent_control.BoundingRectangle
+                    candidates = []
+                    
+                    def walk(control, depth=0):
+                        if depth > 15:
+                            return
+                        try:
+                            ctrl_type = control.ControlTypeName
+                            loc_ctrl_type = (control.LocalizedControlType or "").lower()
+                            
+                            # Accept edit controls or localized control type == 'edit'
+                            is_edit = (ctrl_type == "EditControl" or loc_ctrl_type == "edit")
+                            
+                            name = (control.Name or "").lower()
+                            auto_id = (control.AutomationId or "").lower()
+                            help_text = (control.HelpText or "").lower()
+                            
+                            description = ""
+                            try:
+                                description = getattr(control, "Description", "") or ""
+                            except Exception:
+                                pass
+                            description = (description or "").lower()
+                            
+                            # Filter based on name/auto_id/help_text/description/localized type
+                            has_search = any("search" in text for text in (name, auto_id, help_text, description, loc_ctrl_type))
+                            
+                            if is_edit or has_search:
+                                # Pre-filtering for visible/enabled controls
+                                if not control.IsOffscreen:
+                                    rect = control.BoundingRectangle
+                                    if rect and (rect.right - rect.left) > 0 and (rect.bottom - rect.top) > 0:
+                                        candidates.append(control)
+                        except Exception:
+                            pass
+                            
+                        try:
+                            children = control.GetChildren()
+                        except Exception:
+                            children = []
+                        for child in children:
+                            walk(child, depth + 1)
+                            
+                    walk(parent_control)
+                    if not candidates:
+                        return None
+                        
+                    # Score and return best
+                    best_control = None
+                    best_score = -1
+                    for c in candidates:
+                        score = score_control(c, window_rect)
+                        if score > best_score:
+                            best_score = score
+                            best_control = c
+                    return best_control
+
+                # Step 4 verification helper
+                def verify_search_box_ready(control) -> tuple[bool, str]:
+                    try:
+                        if not control.Exists(0):
+                            return False, "Search Edit control not found"
+                        if not control.IsEnabled:
+                            return False, "Search control disabled"
+                        if control.IsOffscreen:
+                            return False, "Search control hidden"
+                        rect = control.BoundingRectangle
+                        if not rect or (rect.right - rect.left) <= 0 or (rect.bottom - rect.top) <= 0:
+                            return False, "Search control hidden"
+                        return True, ""
+                    except Exception:
+                        return False, "Search Edit control not found"
+
+                # Step 5 Focus Helper
+                def set_focus_on_control(control) -> bool:
+                    # Attempt SetFocus
+                    try:
+                        control.SetFocus()
+                        time.sleep(0.1)
+                        if control.HasKeyboardFocus:
+                            return True
+                    except Exception:
+                        pass
+                    # Attempt ClickCenter
+                    try:
+                        rect = control.BoundingRectangle
+                        if rect:
+                            x = (rect.left + rect.right) // 2
+                            y = (rect.top + rect.bottom) // 2
+                            pyautogui.click(x, y)
+                            time.sleep(0.1)
+                            if control.HasKeyboardFocus:
+                                return True
+                    except Exception:
+                        pass
+                    # Attempt InvokePattern
+                    try:
+                        pattern = control.GetInvokePattern()
+                        if pattern:
+                            pattern.Invoke()
+                            time.sleep(0.1)
+                            if control.HasKeyboardFocus:
+                                return True
+                    except Exception:
+                        pass
+                    # Attempt ValuePattern
+                    try:
+                        pattern = control.GetValuePattern()
+                        if pattern:
+                            pattern.SetValue("")
+                            time.sleep(0.1)
+                            if control.HasKeyboardFocus:
+                                return True
+                    except Exception:
+                        pass
+                    return False
+
+                # Step 6 verification helper
+                def verify_typed_text(control, expected: str) -> bool:
+                    try:
+                        pattern = control.GetValuePattern()
+                        if pattern:
+                            if expected.lower() in (pattern.Value or "").lower():
+                                return True
+                    except Exception:
+                        pass
+                    try:
+                        import pyperclip
+                        pyperclip.copy("")
+                        pyautogui.hotkey("ctrl", "a")
+                        time.sleep(0.1)
+                        pyautogui.hotkey("ctrl", "c")
+                        time.sleep(0.2)
+                        pasted = pyperclip.paste().strip()
+                        pyautogui.press("right")
+                        time.sleep(0.1)
+                        if expected.lower() in pasted.lower():
+                            return True
+                    except Exception:
+                        pass
+                    return False
+
+                # Step 8 chat open verification helper
+                def verify_chat_opened(window, contact_name: str) -> bool:
+                    start_time = time.time()
+                    while time.time() - start_time < 5.0:
+                        # 1. Message input textbox is visible (Name="Type a message")
+                        msg_box = window.Control(searchDepth=15, Name="Type a message")
+                        if msg_box.Exists(0):
+                            return True
+                        # 2. Header equals/contains contact name in right side
+                        window_rect = window.BoundingRectangle
+                        if window_rect:
+                            win_width = window_rect.right - window_rect.left
+                            right_boundary = window_rect.left + int(win_width * 0.45)
+                            def walk_right_side(control, depth=0):
+                                if depth > 10:
+                                    return False
+                                r = control.BoundingRectangle
+                                if r and r.left > right_boundary:
+                                    name = (control.Name or "").lower()
+                                    if contact_name.lower() in name and control.ControlTypeName in ("TextControl", "GroupControl", "PaneControl", "HeaderControl"):
+                                        return True
+                                try:
+                                    children = control.GetChildren()
+                                except Exception:
+                                    children = []
+                                for c in children:
+                                    if walk_right_side(c, depth + 1):
+                                        return True
+                                return False
+                            if walk_right_side(window):
+                                return True
+                        time.sleep(0.5)
+                    return False
+
+                # Step 11 Screenshot failure capture helper
+                def capture_retry_failure_state(retry_count: int):
+                    try:
+                        os.makedirs("data", exist_ok=True)
+                        path = os.path.join("data", f"whatsapp_search_retry_fail_{int(time.time())}_{retry_count}.png")
+                        pyautogui.screenshot(path)
+                        hwnd = win32gui.GetForegroundWindow() if win32gui else 0
+                        win_title = win32gui.GetWindowText(hwnd) if hwnd else "Unknown"
+                        focused = auto.GetFocusedControl()
+                        if focused:
+                            logger.warning(
+                                f"[WHATSAPP] Retry {retry_count} failed. Screenshot saved to {path}\n"
+                                f"Active Window: '{win_title}'\n"
+                                f"Focused Element: '{focused}'\n"
+                                f"Control Type: '{focused.ControlTypeName}'\n"
+                                f"AutomationId: '{focused.AutomationId}'\n"
+                                f"Name: '{focused.Name}'"
+                            )
+                        else:
+                            logger.warning(f"[WHATSAPP] Retry {retry_count} failed. Screenshot saved to {path}. Active Window: '{win_title}'. No focused UIA control.")
+                    except Exception as e:
+                        logger.error(f"[WHATSAPP] Failed to capture retry failure state: {e}")
+
+                # Step 1: Poll until browser window exists, tab title contains "WhatsApp", DOM finished, and search input exists.
+                logger.info("[WHATSAPP] Polling for WhatsApp Web window and Search control (timeout 60s)...")
+                start_poll = time.time()
+                wa_hwnd = None
+                wa_win = None
+                search_box = None
+                
+                while time.time() - start_poll < 60.0:
+                    root = auto.GetRootControl()
+                    target_win = None
+                    for child in root.GetChildren():
+                        title = child.Name or ""
+                        if "whatsapp" in title.lower():
+                            target_win = child
+                            break
+                    if not target_win:
+                        for child in root.GetChildren():
+                            def find_tab(control, depth=0):
+                                if depth > 8:
+                                    return None
+                                if control.ControlTypeName == "TabItemControl" and "whatsapp" in (control.Name or "").lower():
+                                    return control
+                                try:
+                                    children = control.GetChildren()
+                                except Exception:
+                                    children = []
+                                for c in children:
+                                    res = find_tab(c, depth + 1)
+                                    if res:
+                                        return res
+                                return None
+                            tab_item = find_tab(child)
+                            if tab_item:
+                                try:
+                                    pattern = tab_item.GetSelectionItemPattern()
+                                    if pattern:
+                                        pattern.Select()
+                                    else:
+                                        tab_item.Click(simulateMove=False)
+                                except Exception:
+                                    try:
+                                        tab_item.Click(simulateMove=False)
+                                    except Exception:
+                                        pass
+                                child.SetFocus()
+                                if win32gui:
+                                    try:
+                                        win32gui.SetForegroundWindow(child.NativeWindowHandle)
+                                    except Exception:
+                                        pass
+                                time.sleep(0.5)
+                                target_win = child
+                                break
+                    if target_win:
+                        wa_hwnd = target_win.NativeWindowHandle
+                        wa_win = target_win
+                        search_box = find_whatsapp_search_control(target_win)
+                        if search_box:
+                            break
+                    time.sleep(1.0)
+
+                # Step 12: If Search control never became available
+                if not search_box or not wa_win:
+                    logger.error("[WHATSAPP] WhatsApp Search control never became available.")
+                    return ExecutionResult(
+                        success=False,
+                        tool="search_inside_application",
+                        message="WhatsApp Search control never became available.",
+                        metadata={"reason": "WhatsApp Search control never became available."}
+                    )
+
+                # Retry typing loop (Step 7)
+                max_retries = 5
+                typing_success = False
+                last_error_reason = ""
+                
+                for retry in range(1, max_retries + 1):
+                    logger.info(f"[WHATSAPP] Attempting search input retry {retry}/{max_retries}")
+                    
+                    # Step 4 verification
+                    ready, err = verify_search_box_ready(search_box)
+                    if not ready:
+                        last_error_reason = last_error_reason or err
+                        capture_retry_failure_state(retry)
+                        search_box = find_whatsapp_search_control(wa_win)
+                        continue
+                        
+                    # Step 5 Focus
+                    if not set_focus_on_control(search_box):
+                        last_error_reason = last_error_reason or "Unable to focus Search control"
+                        capture_retry_failure_state(retry)
+                        search_box = find_whatsapp_search_control(wa_win)
+                        continue
+                        
+                    # Clear field
+                    try:
+                        pyautogui.hotkey("ctrl", "a")
+                        time.sleep(0.1)
+                        pyautogui.press("backspace")
+                        time.sleep(0.2)
+                    except Exception:
+                        pass
+                        
+                    # Type query
+                    try:
+                        pyautogui.write(query, interval=0.02)
+                        time.sleep(0.5)
+                    except Exception:
+                        pass
+                        
+                    # Step 6 Verify text entry
+                    if verify_typed_text(search_box, query):
+                        typing_success = True
+                        break
+                    else:
+                        last_error_reason = last_error_reason or "Text verification failed"
+                        capture_retry_failure_state(retry)
+                        search_box = find_whatsapp_search_control(wa_win)
+
+                if not typing_success:
+                    return ExecutionResult(
+                        success=False,
+                        tool="search_inside_application",
+                        message=f"{last_error_reason}.",
+                        metadata={"reason": last_error_reason}
+                    )
+
+                # Step 8 Verification after pressing Enter
+                pyautogui.press("down")
+                time.sleep(0.3)
+                pyautogui.press("enter")
                 time.sleep(0.5)
-            else:
-                logger.warning("[WHATSAPP] Could not estimate search coordinates, falling back to shortcuts.")
-                if "chrome" in app or "edge" in app or "firefox" in app or "browser" in app:
-                    pyautogui.hotkey("ctrl", "alt", "/")
-                else:
-                    pyautogui.hotkey("ctrl", "f")
-                time.sleep(0.5)
-            
-            pyautogui.hotkey("ctrl", "a")
-            pyautogui.press("backspace")
-            time.sleep(0.2)
-            pyautogui.write(query, interval=0.03)
-            time.sleep(1.2)
-            
-            # --- Verification using pyperclip ---
-            pyautogui.hotkey("ctrl", "a")
-            pyautogui.hotkey("ctrl", "c")
-            time.sleep(0.3)
-            import pyperclip
-            pasted = pyperclip.paste().strip()
-            if query.lower() not in pasted.lower():
-                return ExecutionResult(success=False, tool="search_inside_application", message="Search box was not focused or text was not entered. UI may not be ready.")
-            pyautogui.press("right")
-            time.sleep(0.1)
-            # ------------------------------------
-            
-            pyautogui.press("down")
-            time.sleep(0.3)
-            pyautogui.press("enter")
-            return ExecutionResult(success=True, tool="search_inside_application", message=f"Searched and opened chat for '{query}' in WhatsApp.")
+                
+                if not verify_chat_opened(wa_win, query):
+                    return ExecutionResult(
+                        success=False,
+                        tool="search_inside_application",
+                        message="Conversation did not open.",
+                        metadata={"reason": "Conversation did not open"}
+                    )
+                    
+                return ExecutionResult(
+                    success=True,
+                    tool="search_inside_application",
+                    message=f"Searched and opened chat for '{query}' in WhatsApp via UIA.",
+                    metadata={"hwnd": wa_hwnd}
+                )
+            except ImportError:
+                return ExecutionResult(
+                    success=False, 
+                    tool="search_inside_application", 
+                    message="uiautomation package is not installed.",
+                    metadata={"reason": "uiautomation package is not installed"}
+                )
+            except Exception as e:
+                return ExecutionResult(
+                    success=False, 
+                    tool="search_inside_application", 
+                    message=f"UIAutomation error: {e}",
+                    metadata={"reason": f"UIAutomation error: {e}"}
+                )
+
 
         elif "spotify" in app or "spotify" in window_title:
             # 1. Locate and focus Spotify window
@@ -761,12 +1154,17 @@ def search_inside_application(args: dict[str, Any]) -> ExecutionResult:
             import pyperclip
             pasted = pyperclip.paste().strip()
             if query.lower() not in pasted.lower():
-                return ExecutionResult(success=False, tool="search_inside_application", message="Spotify search box was not focused or text was not entered.")
+                return ExecutionResult(success=False, tool="search_inside_application", message="Browser address bar was not focused or text was not entered.")
             pyautogui.press("right")
             time.sleep(0.1)
             # ------------------------------------
             
-            return ExecutionResult(success=True, tool="search_inside_application", message=f"Searched for '{query}' in browser address bar.")
+            return ExecutionResult(
+                success=True, 
+                tool="search_inside_application", 
+                message=f"Searched for '{query}' in browser address bar.",
+                metadata={"hwnd": hwnd}
+            )
 
         # Default Fallback: Ctrl+F search
         pyautogui.hotkey("ctrl", "f")

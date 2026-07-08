@@ -30,6 +30,11 @@
       <input type="file" accept="audio/*" id="upload-input" class="upload-input" />
     </div>
 
+    <div class="fsm-status-container" id="fsm-status-container" style="display: none; margin-bottom: 16px; align-items: center; gap: 8px;">
+      <span style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 600; letter-spacing: 0.5px;">Agent State:</span>
+      <span class="fsm-state-badge" id="fsm-state-badge" style="background: var(--primary); color: #FFF; padding: 4px 12px; font-size: 12px; font-weight: 600; border-radius: 20px; text-transform: uppercase; letter-spacing: 0.5px;">Listening</span>
+    </div>
+
     <!-- Status text -->
     <div class="status-text" id="status-text"></div>
 
@@ -39,10 +44,12 @@
       <div class="confirm-body" id="confirm-body">
         <div class="confirm-message" id="confirm-message"></div>
         <div class="confirm-details" id="confirm-details"></div>
+        <textarea class="confirm-edit-textarea" id="confirm-edit-textarea" style="display:none; width:100%; height:180px; margin-top:10px; padding:8px; font-family:monospace; font-size:12px; border:1px solid #ccc; border-radius:4px; box-sizing:border-box;"></textarea>
       </div>
       <div class="confirm-actions" id="confirm-actions">
-        <button class="btn-confirm" id="btn-proceed">Proceed</button>
+        <button class="btn-confirm" id="btn-proceed">Approve</button>
         <button class="btn-cancel-action" id="btn-cancel">Cancel</button>
+        <button class="btn-confirm" id="btn-edit" style="background-color:#6c757d; margin-left:8px;">Edit Plan</button>
       </div>
       <div class="confirm-timer" id="confirm-timer">
         <span id="confirm-timer-text">60s</span>
@@ -125,6 +132,29 @@
     </div>
   </main>
 
+  <!-- Execution Completion Popup (hidden by default) -->
+  <div class="completion-popup-backdrop hidden" id="completion-popup" aria-hidden="true">
+    <div class="completion-popup-card">
+      <button class="completion-popup-close" id="completion-popup-close-btn" aria-label="Close popup">&times;</button>
+      <div class="completion-popup-header" id="completion-popup-header">
+        <span class="completion-popup-icon" id="completion-popup-icon">✓</span>
+        <span class="completion-popup-title" id="completion-popup-title">Task Completed</span>
+      </div>
+      <div class="completion-popup-body">
+        <div class="completion-popup-response" id="completion-popup-response"></div>
+        <div class="completion-popup-summary-section">
+          <div class="completion-popup-summary-title">Execution Summary</div>
+          <div class="completion-popup-summary" id="completion-popup-summary"></div>
+        </div>
+        <div class="completion-popup-error-section hidden" id="completion-popup-error-section">
+          <div class="completion-popup-error-title">Error Details</div>
+          <div class="completion-popup-error" id="completion-popup-error"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script src="/static/js/app.js"></script>
 </body>
 </html>
+

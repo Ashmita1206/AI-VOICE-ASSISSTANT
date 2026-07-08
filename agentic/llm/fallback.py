@@ -101,7 +101,7 @@ def apply_heuristic_fallback(transcription: str) -> PlannerOutput:
             confidence=0.9,
             reasoning=f"Matched WhatsApp messaging flow for '{contact}'.",
             steps=[
-                PlannerStep(tool="launch_application", args={"application": "WhatsApp"}, wait_for="window_ready", timeout=20),
+                PlannerStep(tool="launch_application", args={"application": "WhatsApp"}, wait_for="ui_ready", timeout=60),
                 PlannerStep(tool="search_inside_application", args={"query": contact}),
                 PlannerStep(tool="press_key", args={"key": "enter"}),
                 PlannerStep(tool="type_text", args={"text": message}),
@@ -110,41 +110,46 @@ def apply_heuristic_fallback(transcription: str) -> PlannerOutput:
         )
 
     # Rule 5: Spotify automation (play/pause/resume)
-    play_match = re.match(r"(?:play|search\s+and\s+play)\s+(.+)", text)
-    if play_match:
-        song = play_match.group(1).strip()
-        song = re.sub(r"\s+on\s+spotify$", "", song)
-        song = re.sub(r"\s+in\s+spotify$", "", song)
+    spotify_play_pattern = r"^(?:open\s+spotify\s+and\s+play|spotify\s+play|listen\s+to|play\s+song|play\s+music|play)\s+(.+)"
+    spotify_play_match = re.match(spotify_play_pattern, text)
+    if spotify_play_match:
+        song = spotify_play_match.group(1).strip()
+        song = re.sub(r"\b(on|in)\s+spotify$", "", song, flags=re.IGNORECASE).strip()
         song = re.sub(r"[.!?]+$", "", song).strip()
         
-        last_app = session.last_active_app or session.last_application
-        spotify_involved = "spotify" in text or last_app == "spotify" or not last_app
-        if spotify_involved:
-            return PlannerOutput(
-                intent="play_music",
-                confidence=0.9,
-                reasoning=f"Matched Spotify play for song: '{song}'.",
-                steps=[
-                    PlannerStep(tool="launch_application", args={"application": "Spotify"}, wait_for="window_ready", timeout=25),
-                    PlannerStep(tool="search_inside_application", args={"query": song}),
-                    PlannerStep(tool="press_key", args={"key": "enter"}),
-                    PlannerStep(tool="perform_app_action", args={"action": "play"})
-                ]
-            )
+        return PlannerOutput(
+            intent="play_music",
+            confidence=0.9,
+            reasoning=f"Matched Spotify play for song: '{song}'.",
+            steps=[
+                PlannerStep(tool="launch_application", args={"application": "Spotify"}, wait_for="ui_ready", timeout=60),
+                PlannerStep(tool="search_inside_application", args={"query": song}),
+                PlannerStep(tool="press_key", args={"key": "enter"}),
+                PlannerStep(tool="press_key", args={"key": "enter"})
+            ]
+        )
             
-    if text in ("pause", "pause it", "pause spotify", "pause music", "stop music", "pause song", "resume", "resume play", "play"):
-        last_app = session.last_active_app or session.last_application
-        spotify_involved = "spotify" in text or last_app == "spotify" or not last_app
-        if spotify_involved:
-            return PlannerOutput(
-                intent="pause_music" if text in ("pause", "pause it", "pause spotify", "pause music", "stop music", "pause song") else "play_music",
-                confidence=0.9,
-                reasoning="Matched Spotify playback control.",
-                steps=[
-                    PlannerStep(tool="launch_application", args={"application": "Spotify"}),
-                    PlannerStep(tool="press_key", args={"key": "playpause"})
-                ]
-            )
+    if text in ("pause", "pause it", "pause spotify", "pause music", "stop music", "pause song", "resume", "resume play", "play", "play music", "play song"):
+        return PlannerOutput(
+            intent="pause_music" if text in ("pause", "pause it", "pause spotify", "pause music", "stop music", "pause song") else "play_music",
+            confidence=0.9,
+            reasoning="Matched Spotify playback control.",
+            steps=[
+                PlannerStep(tool="launch_application", args={"application": "Spotify"}),
+                PlannerStep(tool="press_key", args={"key": "playpause"})
+            ]
+        )
+
+    # Intercept any other Spotify command before falling back to resolve_and_open
+    if "spotify" in text:
+        return PlannerOutput(
+            intent="open_resource",
+            confidence=0.9,
+            reasoning="Matched Spotify application launch.",
+            steps=[
+                PlannerStep(tool="launch_application", args={"application": "Spotify"}, wait_for="ui_ready", timeout=60)
+            ]
+        )
 
     # Rule 6: Open browser and search
     if "open" in text and "browser" in text and "search" in text:
@@ -157,7 +162,7 @@ def apply_heuristic_fallback(transcription: str) -> PlannerOutput:
             confidence=0.8,
             reasoning="Matched browser search.",
             steps=[
-                PlannerStep(tool="launch_application", args={"application": "chrome"}, wait_for="window_ready", timeout=20),
+                PlannerStep(tool="launch_application", args={"application": "chrome"}, wait_for="ui_ready", timeout=60),
                 PlannerStep(tool="search_inside_application", args={"query": query})
             ]
         )

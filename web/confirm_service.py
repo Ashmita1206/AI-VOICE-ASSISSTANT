@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 load_all_tools()
 
 
-def handle_confirm(confirmation_id: str, decision: str) -> dict[str, Any]:
+def handle_confirm(confirmation_id: str, decision: str, edited_steps: list[dict] | None = None) -> dict[str, Any]:
     """Process a user's confirmation decision (proceed or cancel)."""
     session = get_session()
 
@@ -61,7 +61,7 @@ def handle_confirm(confirmation_id: str, decision: str) -> dict[str, Any]:
 
     # Extract first step details for confirmation logging
     saved_plan = pending_data["plan"]
-    steps_list = saved_plan.get("steps", [])
+    steps_list = edited_steps if edited_steps is not None else saved_plan.get("steps", [])
     if not steps_list:
         PendingActionManager.clear()
         session.clear_pending_action()
@@ -105,17 +105,14 @@ def handle_confirm(confirmation_id: str, decision: str) -> dict[str, Any]:
             for s in steps_list
         ]
 
+        from execution.executor import DesktopExecutor
+        executor = DesktopExecutor()
+        executor.bypass_confirmation = True
+
         # 1. Execute the first step directly (bypassing confirmation)
         first_step = plan_steps[0]
-        handler = get_handler(first_step.tool)
-        if not handler:
-            return {
-                "success": False,
-                "message": f"Tool '{first_step.tool}' is not registered or available.",
-            }
-
         try:
-            first_res = handler(first_step.args)
+            first_res = executor.execute_step(first_step)
             exec_results = [first_res.to_dict()]
 
             # Update session application and directory context if applicable
@@ -131,8 +128,6 @@ def handle_confirm(confirmation_id: str, decision: str) -> dict[str, Any]:
                     steps=plan_steps[1:],
                     response=""
                 )
-                from execution.executor import SystemExecutor
-                executor = SystemExecutor()
                 rem_results = executor.execute(remaining_plan)
                 exec_results.extend(rem_results)
 
@@ -200,5 +195,62 @@ def get_pending_confirmation() -> dict[str, Any] | None:
     Called by GET /pending to restore the confirmation card after page refresh.
     Returns None if no pending action exists.
     """
+    from agentic.memory.pending_action import PendingActionManager
+    pending_data = PendingActionManager.get_pending_action()
+    if pending_data:
+        plan_dict = pending_data["plan"]
+        steps = plan_dict.get("steps", [])
+        
+        permissions = []
+        estimated_actions = []
+        for s in steps:
+            tool = s.get("tool", "")
+            args = s.get("args", {})
+            if tool in ("press_key", "type_text", "hotkey"):
+                permissions.append("Keyboard Control")
+            elif tool in ("click", "double_click", "right_click", "scroll", "drag"):
+                permissions.append("Mouse Control")
+            elif tool in ("launch_application", "focus_window", "close_window", "is_app_running", "activate_window"):
+                permissions.append("Foreground Window Control")
+            elif tool in ("open_browser", "open_website", "open_whatsapp"):
+                permissions.append("Browser Automation")
+            elif tool in ("search_inside_application", "perform_app_action"):
+                permissions.append("Accessibility/UI Automation")
+            elif tool in ("ocr", "locate_ui_element", "find_text", "take_screenshot"):
+                permissions.append("Screen Capture")
+            elif tool in ("create_file", "create_folder", "delete_file", "delete_folder", "read_directory", "list_files"):
+                permissions.append("File System Access")
+                
+            if tool == "launch_application":
+                estimated_actions.append(f"Open {args.get('application', 'application')}")
+            elif tool == "search_inside_application":
+                estimated_actions.append(f"Search for '{args.get('query', '')}'")
+            elif tool == "press_key":
+                estimated_actions.append(f"Press {args.get('key', '').capitalize()}")
+            elif tool == "type_text":
+                estimated_actions.append(f"Type '{args.get('text', '')}'")
+            elif tool == "open_browser":
+                estimated_actions.append("Open web browser")
+            elif tool == "open_website":
+                estimated_actions.append(f"Navigate to {args.get('url', 'website')}")
+            elif tool == "send_whatsapp_message":
+                estimated_actions.append(f"Send message to {args.get('contact', 'contact')}")
+            else:
+                estimated_actions.append(f"Execute {tool.replace('_', ' ')}")
+                
+        permissions = sorted(list(set(permissions)))
+        if not permissions:
+            permissions = ["System Control"]
+            
+        elapsed = time.time() - pending_data.get("created_at", time.time())
+        return {
+            "id": pending_data["id"],
+            "message": "I will perform these actions to execute your request",
+            "plan": plan_dict,
+            "permissions": permissions,
+            "estimated_actions": estimated_actions,
+            "remaining_seconds": max(0, int(60 - elapsed)),
+        }
+
     session = get_session()
     return session.get_pending_confirmation()

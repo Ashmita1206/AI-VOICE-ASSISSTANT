@@ -44,6 +44,47 @@ import config
 from web.services import get_stt, get_classifier, get_executor, _generate_tts_file
 from tts.response_generator import generate_response
 from storage.history_manager import save_session
+from execution.registry import get_handler, load_all_tools
+from agentic.llm.schemas import PlannerOutput
+
+# Load registered tools
+load_all_tools()
+
+def validate_execution_plan(planner_output: PlannerOutput) -> str | None:
+    """Validate the PlannerOutput execution plan.
+    
+    Returns a string reason if validation fails, or None if validation succeeds.
+    """
+    if not planner_output:
+        return "Planner JSON is missing or null."
+        
+    if not hasattr(planner_output, "steps") or planner_output.steps is None:
+        return "Steps array does not exist in the plan."
+        
+    if len(planner_output.steps) == 0:
+        return "Planner produced no executable steps."
+        
+    seen_steps = set()
+    for idx, s in enumerate(planner_output.steps, 1):
+        if not s.tool:
+            return f"Step {idx} is missing a tool name."
+        if s.args is None:
+            return f"Step {idx} ({s.tool}) is missing arguments."
+        if not getattr(s, "description", None) and not s.description:
+            # We assign step description fallback here
+            s.description = f"Execute {s.tool.replace('_', ' ')}"
+            
+        # Verify tool is registered
+        handler = get_handler(s.tool)
+        if handler is None:
+            return f"Tool '{s.tool}' in step {idx} is not registered."
+            
+        step_fingerprint = (s.tool, json.dumps(s.args, sort_keys=True))
+        if step_fingerprint in seen_steps:
+            return f"Duplicate step detected: {s.tool} with args {s.args}."
+        seen_steps.add(step_fingerprint)
+        
+    return None
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +100,10 @@ def _sse(stage: str, status: str, data: Any = None, message: str | None = None) 
         payload["data"] = data
     if message is not None:
         payload["message"] = message
-    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+    serialized = json.dumps(payload, ensure_ascii=False)
+    safe_serialized = serialized.encode("ascii", "replace").decode("ascii")
+    print(f"[DEBUG BACKEND RESPONSE] Stage: {stage} | Status: {status} | Payload: {safe_serialized[:1000]}")
+    return f"data: {serialized}\n\n"
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -174,8 +218,40 @@ def run_pipeline_stream(audio_path: str) -> Generator[str, None, None]:
 
     planner = get_planner_manager()
     planner_output: PlannerOutput = planner.plan(transcription)
+    print(f"[DEBUG PLANNER OUTPUT]: {json.dumps(planner_output.to_dict(), indent=2)}")
     plan_ms = int((time.perf_counter() - t_plan) * 1000)
     print(f"[REMOTE LLM] Plan received in {plan_ms} ms")
+
+    # ── Step 5.5: Plan Validation ───────────────────────────────────
+    validation_error = validate_execution_plan(planner_output)
+    plan_dict_to_dict = planner_output.to_dict()
+    steps_count = len(planner_output.steps)
+    permissions = plan_dict_to_dict.get("permissions", [])
+    proceed_enabled = (validation_error is None)
+
+    print("-------------------------------------------------")
+    print("[BACKEND PLAN VALIDATION LOGS]")
+    print(f"Planner Output: {json.dumps(plan_dict_to_dict, indent=2)}")
+    print(f"Validated Plan: {proceed_enabled}")
+    print(f"Steps Count: {steps_count}")
+    print(f"Permissions: {permissions}")
+    print(f"Proceed Enabled = {proceed_enabled}")
+    if validation_error:
+        print(f"Reason if false: {validation_error}")
+    print("-------------------------------------------------")
+
+    if validation_error:
+        yield _sse("planner", "failed", data={
+            "success": False,
+            "error": validation_error
+        }, message=f"Failed to generate execution plan: {validation_error}")
+        yield _sse("done", "error", data={
+            "status": "error",
+            "success": False,
+            "error": validation_error,
+            "message": f"Failed to generate execution plan. Reason: {validation_error}"
+        }, message=f"Failed to generate execution plan: {validation_error}")
+        return
 
     plan_steps = [
         ActionStep(tool=s.tool, args=s.args)
@@ -185,170 +261,238 @@ def run_pipeline_stream(audio_path: str) -> Generator[str, None, None]:
 
     yield _sse("planner", "completed", data=planner_output.to_dict())
 
-    # ── Step 6: Execution ─────────────────────────────────────────────
-    # We run execution in a background thread and drain the progress queue
-    # so that the generator (running in the Flask request thread) can yield
-    # SSE events as they arrive without blocking on the full execution.
-
-    exec_progress_queue: queue.Queue[str | None] = queue.Queue()
-    exec_results_holder: list[list[dict]] = []
-    exec_error_holder: list[Exception] = []
-
-    def _run_execution():
-        try:
-            executor = get_executor()
-
-            def _progress(msg: str) -> None:
-                exec_progress_queue.put(msg)
-
-            results = []
-            for idx, step in enumerate(plan_steps, 1):
-                _progress(f"Step {idx}/{len(plan_steps)}: {step.tool}")
-                res_step = executor.execute_step(step, progress_callback=_progress)
-                results.append(res_step.to_dict())
-
-                if res_step.requires_confirmation:
-                    _progress(f"__REQUIRES_CONFIRMATION__:{res_step.confirmation_id}:{res_step.message}")
-                    # Handle remaining plan via executor.execute() for PendingActionManager
-                    remaining_plan = ExecutionPlan(
-                        thought=plan.thought,
-                        steps=plan_steps[idx - 1:],
-                        response="",
-                    )
-                    full_results = executor.execute(remaining_plan, progress_callback=_progress)
-                    exec_results_holder.append(full_results)
-                    exec_progress_queue.put(None)  # sentinel
-                    return
-
-                if not res_step.success:
-                    _progress(f"Step failed — triggering recovery replan")
-                    remaining_plan = ExecutionPlan(
-                        thought=plan.thought,
-                        steps=plan_steps[idx - 1:],
-                        response="",
-                    )
-                    full_results = executor.execute(remaining_plan, progress_callback=_progress)
-                    exec_results_holder.append(full_results)
-                    exec_progress_queue.put(None)  # sentinel
-                    return
-
-            exec_results_holder.append(results)
-        except Exception as exc:
-            exec_error_holder.append(exc)
-        finally:
-            exec_progress_queue.put(None)  # sentinel — always signal done
-
-    exec_thread = threading.Thread(target=_run_execution, daemon=True)
-    exec_thread.start()
-
-    # Yield "execution started" so the card appears immediately
-    yield _sse("execution", "running", message="Starting execution…")
-
-    confirmation_detected = False
-    confirmation_id_val: str | None = None
-    confirmation_message_val: str | None = None
-
-    # Drain the queue until the sentinel arrives
-    while True:
-        try:
-            msg = exec_progress_queue.get(timeout=30)
-        except queue.Empty:
-            # Timeout safety — break out
-            break
-
-        if msg is None:
-            break  # sentinel
-
-        # Check for confirmation marker
-        if msg.startswith("__REQUIRES_CONFIRMATION__:"):
-            _, conf_id, conf_msg = msg.split(":", 2)
-            confirmation_detected = True
-            confirmation_id_val = conf_id
-            confirmation_message_val = conf_msg
-            yield _sse("execution", "requires_confirmation", message=conf_msg)
-            continue
-
-        yield _sse("execution", "running", message=msg)
-
-    exec_thread.join(timeout=5)
-
-    if exec_error_holder:
-        yield _sse("execution", "failed", message=str(exec_error_holder[0]))
-        yield _sse("done", "error", data={"error": str(exec_error_holder[0])})
-        return
-
-    exec_results: list[dict] = exec_results_holder[0] if exec_results_holder else []
-
-    # ── Confirmation fast-path ────────────────────────────────────────
-    confirmation_step = next(
-        (r for r in exec_results if r.get("requires_confirmation")),
-        None,
-    )
-    if confirmation_step:
-        conf_id = confirmation_step.get("confirmation_id")
-        conf_message = confirmation_step.get("message", "Confirm this action?")
-        conf_tool = confirmation_step.get("tool", "unknown")
-
-        from agentic.memory.session_state import get_session as _get_session
-        pending = _get_session().get_pending_confirmation()
-
-        partial_result = {
+    # ── Step 6: Full Plan Confirmation ───────────────────────────────────────
+    if len(planner_output.steps) == 0:
+        # Proceed directly to response generation for conversational intents
+        yield _sse("response", "processing", message="Generating assistant response…")
+        response_text = planner_output.reasoning or "No actions planned."
+        speech_audio_path = _generate_tts_file(response_text)
+        speech_data = {"text": response_text}
+        if speech_audio_path:
+            speech_data["audio_url"] = f"/static/audio/{os.path.basename(speech_audio_path)}"
+        yield _sse("response", "completed", data=speech_data)
+        if speech_audio_path:
+            logger.info("Audio URL Sent")
+        
+        result = {
             "transcription": transcription,
             "stt": stt_metrics,
             "intent": {"name": planner_output.intent, "confidence": round(planner_output.confidence * 100, 1)},
             "entities": command.entities,
             "planner": planner_output.to_dict(),
-            "execution": exec_results,
-            "speech": {"text": conf_message},
+            "execution": [],
+            "speech": speech_data,
             "pipeline_time_ms": int((time.perf_counter() - pipeline_start) * 1000),
             "timestamp": datetime.now().isoformat(),
         }
-        save_session(partial_result)
-
-        yield _sse("execution", "completed", data={"steps": exec_results})
-        yield _sse("done", "requires_confirmation", data={
-            "status": "requires_confirmation",
-            "transcription": transcription,
-            "confirmation": {
-                "id": conf_id,
-                "message": conf_message,
-                "tool": conf_tool,
-                "args": pending["args"] if pending else {},
-                "remaining_seconds": pending["remaining_seconds"] if pending else 60,
-            },
-            "intent": {"name": planner_output.intent, "confidence": round(planner_output.confidence * 100, 1)},
-            "entities": command.entities,
-            "planner": planner_output.to_dict(),
-            "pipeline_time_ms": int((time.perf_counter() - pipeline_start) * 1000),
-        })
+        save_session(result)
+        yield _sse("done", "success", data=result)
         return
 
-    yield _sse("execution", "completed", data={"steps": exec_results})
-
-    # ── Step 7: Response Generation + TTS ────────────────────────────
-    yield _sse("response", "processing", message="Generating assistant response…")
-
-    response_text = generate_response(exec_results)
-    speech_audio_path = _generate_tts_file(response_text)
-
-    speech_data: dict[str, Any] = {"text": response_text}
-    if speech_audio_path:
-        speech_data["audio_url"] = f"/static/audio/{os.path.basename(speech_audio_path)}"
-
-    yield _sse("response", "completed", data=speech_data)
-
-    # ── Final assembled payload ───────────────────────────────────────
-    result = {
+    plan_dict = {
+        "intent": planner_output.intent,
+        "thought": planner_output.reasoning,
+        "steps": [
+            {"tool": s.tool, "args": s.args} for s in planner_output.steps
+        ],
+    }
+    
+    from agentic.memory.pending_action import PendingActionManager
+    confirmation_id = PendingActionManager.save(plan_dict)
+    
+    # Infer permissions and estimated actions
+    permissions = []
+    estimated_actions = []
+    
+    for s in planner_output.steps:
+        tool = s.tool
+        args = s.args or {}
+        
+        # Map tools to permissions
+        if tool in ("press_key", "type_text", "hotkey"):
+            permissions.append("Keyboard Control")
+        elif tool in ("click", "double_click", "right_click", "scroll", "drag"):
+            permissions.append("Mouse Control")
+        elif tool in ("launch_application", "focus_window", "close_window", "is_app_running", "activate_window"):
+            permissions.append("Foreground Window Control")
+        elif tool in ("open_browser", "open_website", "open_whatsapp"):
+            permissions.append("Browser Automation")
+        elif tool in ("search_inside_application", "perform_app_action"):
+            permissions.append("Accessibility/UI Automation")
+        elif tool in ("ocr", "locate_ui_element", "find_text", "take_screenshot"):
+            permissions.append("Screen Capture")
+        elif tool in ("create_file", "create_folder", "delete_file", "delete_folder", "read_directory", "list_files"):
+            permissions.append("File System Access")
+            
+        # Human-friendly action descriptions
+        if tool == "launch_application":
+            estimated_actions.append(f"Open {args.get('application', 'application')}")
+        elif tool == "search_inside_application":
+            estimated_actions.append(f"Search for '{args.get('query', '')}'")
+        elif tool == "press_key":
+            estimated_actions.append(f"Press {args.get('key', '').capitalize()}")
+        elif tool == "type_text":
+            estimated_actions.append(f"Type '{args.get('text', '')}'")
+        elif tool == "open_browser":
+            estimated_actions.append("Open web browser")
+        elif tool == "open_website":
+            estimated_actions.append(f"Navigate to {args.get('url', 'website')}")
+        elif tool == "send_whatsapp_message":
+            estimated_actions.append(f"Send message to {args.get('contact', 'contact')}")
+        else:
+            estimated_actions.append(f"Execute {tool.replace('_', ' ')}")
+            
+    # Deduplicate permissions
+    permissions = sorted(list(set(permissions)))
+    if not permissions:
+        permissions = ["System Control"]
+        
+    yield _sse("done", "requires_confirmation", data={
+        "status": "requires_confirmation",
         "transcription": transcription,
-        "stt": stt_metrics,
+        "confirmation": {
+            "id": confirmation_id,
+            "message": f"I will perform these actions to execute your request: '{transcription}'",
+            "plan": planner_output.to_dict(),
+            "permissions": permissions,
+            "estimated_actions": estimated_actions,
+            "remaining_seconds": 60,
+        },
         "intent": {"name": planner_output.intent, "confidence": round(planner_output.confidence * 100, 1)},
         "entities": command.entities,
         "planner": planner_output.to_dict(),
+        "pipeline_time_ms": int((time.perf_counter() - pipeline_start) * 1000),
+    })
+
+
+def run_confirmation_stream(confirmation_id: str, edited_steps: list[dict] | None = None) -> Generator[str, None, None]:
+    """Execute the pending action plan and stream the progress as SSE."""
+    from agentic.memory.pending_action import PendingActionManager
+    from agentic.memory.session_state import get_session
+    from execution.executor import DesktopExecutor
+    from agentic.schemas import ActionStep, ExecutionPlan
+    import queue
+    import threading
+    
+    session = get_session()
+    pending_data = PendingActionManager.get_pending_action()
+    
+    if not pending_data or pending_data.get("id") != confirmation_id:
+        yield _sse("done", "error", message="Pending action timed out or not found.")
+        return
+        
+    saved_plan = pending_data["plan"]
+    
+    # Use edited steps if provided, otherwise the saved steps
+    steps_list = edited_steps if edited_steps is not None else saved_plan.get("steps", [])
+    if not steps_list:
+        PendingActionManager.clear()
+        session.clear_pending_action()
+        yield _sse("done", "error", message="Pending action plan is empty.")
+        return
+        
+    # Clear pending action state
+    PendingActionManager.clear()
+    session.clear_pending_action()
+    
+    plan_steps = [
+        ActionStep(tool=s["tool"], args=s["args"])
+        for s in steps_list
+    ]
+    plan = ExecutionPlan(
+        thought=saved_plan.get("thought", "Executing approved plan"),
+        steps=plan_steps,
+        response=""
+    )
+    
+    yield _sse("execution", "running", message="Starting execution…")
+    logger.info(f"Dispatching plan with {len(plan_steps)} steps to executor...")
+    
+    try:
+        executor = DesktopExecutor()
+        executor.bypass_confirmation = True  # Bypass individual step prompts since the entire plan is approved
+    except Exception as exc:
+        logger.exception("Failed to initialize DesktopExecutor")
+        yield _sse("execution", "failed", message=f"Executor init failed: {exc}")
+        yield _sse("done", "error", data={"error": str(exc)})
+        return
+    
+    progress_queue: queue.Queue[str | None] = queue.Queue()
+    exec_results_holder: list[list[dict]] = []
+    exec_error_holder: list[Exception] = []
+    
+    def _run_execution():
+        try:
+            full_results = executor.execute(plan, progress_callback=progress_queue.put)
+            exec_results_holder.append(full_results)
+        except Exception as e:
+            exec_error_holder.append(e)
+        finally:
+            progress_queue.put(None)
+            
+    logger.info("Starting execution background thread...")
+    logger.info("Execution Started")
+    exec_thread = threading.Thread(target=_run_execution, daemon=True)
+    exec_thread.start()
+    
+    while True:
+        try:
+            msg = progress_queue.get(timeout=30)
+        except queue.Empty:
+            logger.warning("Execution queue timed out after 30s")
+            break
+        if msg is None:
+            break
+        safe_msg = msg.encode("ascii", "replace").decode("ascii") if msg else ""
+        logger.info(f"Execution progress: {safe_msg}")
+        yield _sse("execution", "running", message=msg)
+        
+    logger.info("Waiting for execution thread to finish...")
+    exec_thread.join(timeout=5)
+    logger.info("Execution thread finished.")
+    logger.info("Execution Finished")
+    
+    if exec_error_holder:
+        yield _sse("execution", "failed", message=str(exec_error_holder[0]))
+        yield _sse("done", "error", data={"error": str(exec_error_holder[0])})
+        return
+        
+    exec_results = exec_results_holder[0] if exec_results_holder else []
+    yield _sse("execution", "completed", data={"steps": exec_results})
+    
+    # Step 7: Response Generation + TTS
+    yield _sse("response", "processing", message="Generating assistant response…")
+    
+    response_text = generate_response(exec_results)
+    speech_audio_path = _generate_tts_file(response_text)
+    
+    speech_data: dict[str, Any] = {"text": response_text}
+    if speech_audio_path:
+        speech_data["audio_url"] = f"/static/audio/{os.path.basename(speech_audio_path)}"
+        
+    yield _sse("response", "completed", data=speech_data)
+    if speech_audio_path:
+        logger.info("Audio URL Sent")
+    
+    # Add to session history
+    session.add_history(
+        transcript=f"[Confirmed] {saved_plan.get('thought', 'User approved execution plan')}",
+        intent="execute_confirmed",
+        plan=saved_plan,
+        result=response_text,
+    )
+    
+    # Save session
+    result = {
+        "transcription": saved_plan.get('thought', 'User approved execution plan'),
+        "stt": {"model": "", "device": "", "compute_type": "", "language": "", "confidence": 100, "processing_time_ms": 0},
+        "intent": {"name": saved_plan.get("intent", "execute_confirmed"), "confidence": 100},
+        "entities": {},
+        "planner": saved_plan,
         "execution": exec_results,
         "speech": speech_data,
-        "pipeline_time_ms": int((time.perf_counter() - pipeline_start) * 1000),
+        "pipeline_time_ms": 0,
         "timestamp": datetime.now().isoformat(),
     }
     save_session(result)
-
     yield _sse("done", "success", data=result)

@@ -28,8 +28,77 @@ def _ensure_playwright():
 
 @register_tool("open_whatsapp")
 def open_whatsapp(args: dict[str, Any]) -> ExecutionResult:
-    """Open WhatsApp Web. We'll use a simple URL open for the non-automated part."""
+    """Open WhatsApp Web, reusing an existing tab if possible."""
     try:
+        import uiautomation as auto
+        try:
+            import win32gui
+        except ImportError:
+            win32gui = None
+            
+        root = auto.GetRootControl()
+        target_win = None
+        
+        # 1. Search for any open window with "whatsapp" in its title
+        for child in root.GetChildren():
+            title = child.Name or ""
+            if "whatsapp" in title.lower():
+                target_win = child
+                break
+                
+        # 2. Search for browser tabs with "whatsapp" in title
+        if not target_win:
+            for child in root.GetChildren():
+                # Tab item walker
+                def find_tab(control, depth=0):
+                    if depth > 8:
+                        return None
+                    if control.ControlTypeName == "TabItemControl" and "whatsapp" in (control.Name or "").lower():
+                        return control
+                    try:
+                        children = control.GetChildren()
+                    except Exception:
+                        children = []
+                    for c in children:
+                        res = find_tab(c, depth + 1)
+                        if res:
+                            return res
+                    return None
+                
+                tab_item = find_tab(child)
+                if tab_item:
+                    # Switch tab
+                    try:
+                        pattern = tab_item.GetSelectionItemPattern()
+                        if pattern:
+                            pattern.Select()
+                        else:
+                            tab_item.Click(simulateMove=False)
+                    except Exception:
+                        try:
+                            tab_item.Click(simulateMove=False)
+                        except Exception:
+                            pass
+                    child.SetFocus()
+                    if win32gui:
+                        try:
+                            win32gui.SetForegroundWindow(child.NativeWindowHandle)
+                        except Exception:
+                            pass
+                    time.sleep(0.5)
+                    target_win = child
+                    break
+                    
+        if target_win:
+            logger.info("[WHATSAPP] Reused existing WhatsApp tab.")
+            return ExecutionResult(
+                success=True,
+                tool="open_whatsapp",
+                message="WhatsApp tab reused.",
+                metadata={"hwnd": target_win.NativeWindowHandle, "reused_window": True}
+            )
+            
+        # Fallback to opening a new tab
         import webbrowser
         webbrowser.open("https://web.whatsapp.com")
         return ExecutionResult(
@@ -38,7 +107,17 @@ def open_whatsapp(args: dict[str, Any]) -> ExecutionResult:
             message="Opening WhatsApp Web."
         )
     except Exception as e:
-        return ExecutionResult(success=False, tool="open_whatsapp", message=f"Failed to open WhatsApp: {e}")
+        logger.warning(f"Failed to reuse WhatsApp tab: {e}. Opening new window/tab.")
+        try:
+            import webbrowser
+            webbrowser.open("https://web.whatsapp.com")
+            return ExecutionResult(
+                success=True,
+                tool="open_whatsapp",
+                message="Opening WhatsApp Web."
+            )
+        except Exception as ex:
+            return ExecutionResult(success=False, tool="open_whatsapp", message=f"Failed to open WhatsApp: {ex}")
 
 @register_tool("send_whatsapp_message")
 def send_whatsapp_message(args: dict[str, Any]) -> ExecutionResult:

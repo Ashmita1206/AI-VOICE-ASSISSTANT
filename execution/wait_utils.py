@@ -333,28 +333,34 @@ def wait_until_application_ready(
         return WaitResult(success=False, elapsed_ms=int(timeout * 1000),
                           message=f"Timeout after window wait for '{app_name}'.")
 
-    # Phase 3: Window must become active
+    # Phase 3: Window active check (best-effort — OS foreground lock can block this).
+    # If the window exists but cannot be promoted to foreground, we still count it as
+    # ready because the process is running and the window is visible and usable.
     r3 = wait_until_window_active(app_name, timeout=remaining, poll_interval=poll_interval)
     total_ms = int((time.perf_counter() - start) * 1000)
 
-    if not r3.success:
-        logger.warning(
-            f"[WAIT] '{app_name}' window exists but did not become active within timeout."
-        )
+    if r3.success:
         return WaitResult(
-            success=False,
+            success=True,
             elapsed_ms=total_ms,
-            message=(
-                f"Application '{app_name}' window exists but did not become active "
-                f"within {timeout}s timeout."
-            )
+            message=f"Application '{app_name}' is fully ready (process + window + active)."
         )
 
+    # Window active check timed out — but process is running and window is visible (Phase 2 passed).
+    # Treat this as success; foreground status is best-effort only.
+    logger.warning(
+        f"[WAIT] '{app_name}' window exists but did not become active foreground window "
+        f"within timeout — counting as ready (process running + window visible)."
+    )
     return WaitResult(
         success=True,
         elapsed_ms=total_ms,
-        message=f"Application '{app_name}' is fully ready (process + window + active)."
+        message=(
+            f"Application '{app_name}' process is running and window is visible "
+            f"(foreground promotion blocked by OS — window is usable)."
+        )
     )
+
 
 
 def wait_until_element_ready(
@@ -463,6 +469,90 @@ def wait_until_browser_loaded(
             )
         time.sleep(poll_interval)
 
+# ---------------------------------------------------------------------------
+# UI Readiness Primitive
+# ---------------------------------------------------------------------------
+
+def _verify_dom_ready(app_name: str) -> bool:
+    """Stub for app-specific UI readiness checks.
+    
+    Called by wait_until_ui_ready to verify if the DOM is interactive.
+    In the future, this can be extended with image recognition, pixel color
+    checking, or accessibility API queries.
+    """
+    app = app_name.lower()
+    win32gui, _ = _try_import_win32()
+    
+    if not win32gui:
+        return True
+        
+    try:
+        hwnd = win32gui.GetForegroundWindow()
+        title = win32gui.GetWindowText(hwnd).lower()
+        if not title:
+            return False
+    except Exception:
+        return False
+        
+    # Placeholder checks
+    if "whatsapp" in app and "whatsapp" not in title:
+        return False
+    if "spotify" in app and "spotify" not in title:
+        return False
+        
+    return True
+
+def wait_until_ui_ready(
+    app_name: str,
+    timeout: float = 60.0,
+    poll_interval: float = 0.5
+) -> WaitResult:
+    """Wait until a web application's UI is interactable (e.g. SPAs have rendered).
+    
+    This first ensures the window is active and visible, then polls
+    `_verify_dom_ready` to verify the DOM/UI is fully loaded.
+    
+    Parameters
+    ----------
+    app_name:
+        Target application name.
+    timeout:
+        Maximum seconds to wait.
+    poll_interval:
+        Seconds between polls.
+
+    Returns
+    -------
+    WaitResult
+    """
+    start = time.perf_counter()
+    
+    while True:
+        elapsed = time.perf_counter() - start
+        
+        # 1. Check window is active
+        active_res = wait_until_window_active(app_name, timeout=0.1)
+        if active_res.success:
+            # 2. Check UI rendering
+            if _verify_dom_ready(app_name):
+                ms = int(elapsed * 1000)
+                logger.debug(f"[WAIT] UI ready for '{app_name}' after {ms} ms.")
+                return WaitResult(
+                    success=True,
+                    elapsed_ms=ms,
+                    message=f"UI ready for '{app_name}'."
+                )
+                
+        if elapsed >= timeout:
+            ms = int(elapsed * 1000)
+            return WaitResult(
+                success=False,
+                elapsed_ms=ms,
+                message=f"Timeout ({timeout}s): UI for '{app_name}' did not become ready."
+            )
+            
+        time.sleep(poll_interval)
+
 
 # ---------------------------------------------------------------------------
 # Dispatcher (used by executor to resolve "wait_for" metadata field)
@@ -481,8 +571,9 @@ def dispatch_wait(
     Parameters
     ----------
     wait_for:
-        One of: ``"window_ready"``, ``"process_running"``, ``"window_exists"``,
-        ``"window_active"``, ``"element_ready"``, ``"browser_loaded"``.
+        One of: ``"window_ready"``, ``"ui_ready"``, ``"process_running"``,
+        ``"window_exists"``, ``"window_active"``, ``"element_ready"``, 
+        ``"browser_loaded"``.
     args:
         The step's args dict (used to extract ``application``, ``query``, etc.).
     timeout:
@@ -518,6 +609,8 @@ def dispatch_wait(
         if opened_in_browser or reused_window:
             return wait_until_application_ready(app_name, skip_process_check=True, **kwargs)
         return wait_until_application_ready(app_name, skip_process_check=False, **kwargs)
+    elif wf == "ui_ready":
+        return wait_until_ui_ready(app_name, **kwargs)
     elif wf == "process_running":
         return wait_until_process_running(app_name, **kwargs)
     elif wf == "window_exists":

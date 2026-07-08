@@ -376,17 +376,59 @@ def recover_step(
     if screenshot_path:
         step_record.metadata["recovery_screenshot"] = screenshot_path
 
-    # 2. If this is an application-launch step: try relaunch first
+    # 2. For application-launch steps, try focus/restore first, then relaunch only if
+    #    the process is genuinely not running (prevents duplicate-instance spawning).
     if tool in ("open_application", "launch_application", "resolve_and_open") and app_name:
-        result = relaunch_application(app_name)
+        # 2a. Try to restore a minimized window first
+        result = restore_minimized_window(app_name)
         if result.succeeded:
-            # Brief wait for process to appear before returning
-            from execution.wait_utils import wait_until_process_running
-            wait_until_process_running(app_name, timeout=10.0)
             return result
-        # Fall through to focus strategies if relaunch fails
 
-    # 3. Try to restore a minimized window
+        # 2b. Try to bring the window to foreground
+        result = bring_to_foreground(app_name)
+        if result.succeeded:
+            time.sleep(0.3)
+            return result
+
+        # 2c. Only relaunch if the process is confirmed NOT running
+        process_running = False
+        try:
+            import psutil
+            for proc in psutil.process_iter(attrs=["name"]):
+                p_name = (proc.info.get("name") or "").lower()
+                p_clean = p_name[:-4] if p_name.endswith(".exe") else p_name
+                if app_name in p_clean or p_clean in app_name:
+                    process_running = True
+                    break
+        except Exception:
+            pass
+
+        if not process_running:
+            logger.info(f"[RECOVERY] Process '{app_name}' not found; relaunching.")
+            result = relaunch_application(app_name)
+            if result.succeeded:
+                from execution.wait_utils import wait_until_process_running
+                wait_until_process_running(app_name, timeout=10.0)
+                return result
+        else:
+            logger.info(
+                f"[RECOVERY] Process '{app_name}' IS running — skipping relaunch to prevent duplicate instance. "
+                "Focus strategies already attempted above."
+            )
+            # Return a partial success so the verifier can re-check visibility
+            return RecoveryResult(
+                succeeded=True,
+                strategy_used="process_already_running",
+                message=f"Process '{app_name}' is already running; window focus was attempted."
+            )
+
+        return RecoveryResult(
+            succeeded=False,
+            strategy_used="all_launch_strategies_exhausted",
+            message=f"Could not focus or relaunch '{app_name}'."
+        )
+
+    # 3. For non-launch tools: try to restore minimized window
     if app_name:
         result = restore_minimized_window(app_name)
         if result.succeeded:

@@ -622,3 +622,53 @@ class TestPermissionManagerWaitTools:
         assert not PermissionManager.requires_confirmation(tool, {}), (
             f"'{tool}' should NOT require confirmation."
         )
+
+def test_delayed_browser_load():
+    """Verify that search_inside_application is not executed if ui_ready times out,
+    and verify that it waits properly when ui_ready polls successfully after a delay."""
+    from agentic.schemas import ExecutionPlan, ActionStep
+    from execution.executor import DesktopExecutor
+    from execution.schemas import ExecutionResult
+
+    plan = ExecutionPlan(
+        thought="test_ui_ready",
+        steps=[
+            ActionStep(
+                tool="launch_application",
+                args={"application": "whatsapp"},
+                wait_for="ui_ready",
+                timeout=0.3
+            ),
+            ActionStep(
+                tool="search_inside_application",
+                args={"query": "test"}
+            )
+        ]
+    )
+
+    executor = DesktopExecutor()
+    
+    # Mock dispatch_wait to simulate a delayed DOM load
+    from execution.verifier import VerifyResult
+    with patch("execution.executor.dispatch_wait") as mock_wait:
+        from execution.wait_utils import WaitResult
+        # 1. Simulate timeout (DOM never renders)
+        mock_wait.return_value = WaitResult(success=False, elapsed_ms=300, message="Timeout")
+        
+        with patch.object(executor, "execute_step", return_value=ExecutionResult(success=True, tool="launch_application")) as mock_exec:
+            results = executor.execute(plan)
+            # Should halt after launch_application because wait failed
+            assert len(results) == 1
+            assert results[0]["tool"] == "launch_application"
+            # execute_step is called 3 times due to 2 retries on wait failure
+            assert mock_exec.call_count == 3
+            
+        # 2. Simulate delayed success
+        mock_wait.return_value = WaitResult(success=True, elapsed_ms=200, message="UI ready")
+        
+        with patch("execution.executor.dispatch_verify", return_value=VerifyResult(passed=True, message="")), \
+             patch.object(executor, "execute_step", return_value=ExecutionResult(success=True, tool="mock")) as mock_exec:
+            results = executor.execute(plan)
+            # Should execute both steps
+            assert len(results) == 2
+            assert mock_exec.call_count == 2

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +64,25 @@ def _try_win32():
     except ImportError:
         return None, None
 
+def is_uwp_window_for_pid(hwnd: int, target_pid: int) -> bool:
+    """Return True if the top-level hwnd is an ApplicationFrameWindow containing a child of target_pid."""
+    win32gui, win32process = _try_win32()
+    if not win32gui or not win32process:
+        return False
+    try:
+        class_name = win32gui.GetClassName(hwnd)
+        if class_name == "ApplicationFrameWindow":
+            child_pids = []
+            def enum_child_cb(child_hwnd, extra):
+                _, child_pid = win32process.GetWindowThreadProcessId(child_hwnd)
+                child_pids.append(child_pid)
+                return True
+            win32gui.EnumChildWindows(hwnd, enum_child_cb, None)
+            if target_pid in child_pids:
+                return True
+    except Exception:
+        pass
+    return False
 
 def _is_process_running(name: str) -> bool:
     """Return True if any process name contains *name* (case-insensitive)."""
@@ -81,18 +101,69 @@ def _is_process_running(name: str) -> bool:
     return False
 
 
-def _is_window_visible(fragment: str) -> bool:
-    """Return True if a visible window title contains *fragment*."""
-    win32gui, _ = _try_win32()
-    if win32gui is None:
-        return True  # can't verify — assume ok
+def _get_window_title_fragments(fragment: str) -> list[str]:
+    """Map process/app names to possible window title fragments."""
     fragment = fragment.lower().strip()
+    fragments = [fragment]
+    if fragment == "msedge":
+        fragments.extend(["microsoft edge", "edge"])
+    elif fragment == "chrome":
+        fragments.extend(["google chrome", "chromium"])
+    elif fragment in ["powershell", "windows powershell", "pwsh"]:
+        fragments.extend([
+            "windows powershell", 
+            "administrator: windows powershell", 
+            "powershell", 
+            "powershell 7", 
+            "pwsh", 
+            "windows terminal"
+        ])
+    elif fragment in ["cmd", "command prompt"]:
+        fragments.extend(["command prompt", "cmd", "windows terminal"])
+    elif fragment == "notepad":
+        fragments.extend(["notepad"])
+    elif fragment == "calculator":
+        fragments.extend(["calculator"])
+    elif fragment == "spotify":
+        fragments.extend(["spotify"])
+    return list(set(fragments))
+
+
+def _get_expected_pids(fragment: str, psutil) -> set[int]:
+    expected_pids = set()
+    frag_clean = fragment.lower().strip()
+    frag_clean = frag_clean[:-4] if frag_clean.endswith(".exe") else frag_clean
+    try:
+        for proc in psutil.process_iter(attrs=["pid", "name"]):
+            p = (proc.info.get("name") or "").lower()
+            p_clean = p[:-4] if p.endswith(".exe") else p
+            if frag_clean in p_clean or p_clean in frag_clean:
+                expected_pids.add(proc.info["pid"])
+            elif p_clean == "windowsterminal" and frag_clean in ["powershell", "cmd", "pwsh", "command prompt"]:
+                expected_pids.add(proc.info["pid"])
+    except Exception:
+        pass
+    return expected_pids
+
+
+def _is_window_visible(fragment: str) -> bool:
+    """Return True if a visible window title or PID matches *fragment*."""
+    win32gui, win32process = _try_win32()
+    psutil = _try_psutil()
+    if win32gui is None or win32process is None or psutil is None:
+        return True  # can't verify — assume ok
+    
+    fragments = _get_window_title_fragments(fragment)
+    expected_pids = _get_expected_pids(fragment, psutil)
+    
     found = []
     try:
         def _cb(hwnd, _):
             if win32gui.IsWindowVisible(hwnd):
                 title = win32gui.GetWindowText(hwnd).lower()
-                if fragment in title:
+                _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                
+                if pid in expected_pids or any(is_uwp_window_for_pid(hwnd, ep) for ep in expected_pids) or any(frag in title for frag in fragments):
                     found.append(True)
             return True
         win32gui.EnumWindows(_cb, None)
@@ -101,18 +172,144 @@ def _is_window_visible(fragment: str) -> bool:
     return bool(found)
 
 
-def _is_window_foreground(fragment: str) -> bool:
-    """Return True if the foreground window title contains *fragment*."""
-    win32gui, _ = _try_win32()
-    if win32gui is None:
+def _enumerate_all_windows() -> list[dict]:
+    """Enumerate all top-level windows and return a list of diagnostic dicts.
+
+    Each dict contains:
+    - hwnd: window handle
+    - title: window title
+    - pid: owning process ID
+    - visible: IsWindowVisible result
+    - minimized: IsIconic result
+    - foreground: whether this is the current foreground window
+    """
+    win32gui, win32process = _try_win32()
+    if win32gui is None or win32process is None:
+        return []
+
+    results: list[dict] = []
+    try:
+        fg_hwnd = win32gui.GetForegroundWindow()
+    except Exception:
+        fg_hwnd = 0
+
+    def _cb(hwnd, _):
+        try:
+            title = win32gui.GetWindowText(hwnd)
+            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+            visible = bool(win32gui.IsWindowVisible(hwnd))
+            minimized = bool(win32gui.IsIconic(hwnd))
+            foreground = (hwnd == fg_hwnd)
+            results.append({
+                "hwnd": hwnd,
+                "title": title,
+                "pid": pid,
+                "visible": visible,
+                "minimized": minimized,
+                "foreground": foreground,
+            })
+        except Exception:
+            pass
         return True
+
+    try:
+        win32gui.EnumWindows(_cb, None)
+    except Exception as exc:
+        logger.debug(f"[VERIFY][ENUM] EnumWindows error: {exc}")
+
+    return results
+
+
+def _is_window_foreground(fragment: str) -> bool:
+    """Return True if the foreground window title or PID matches *fragment*.
+    If it is not foreground, attempts to bring it to foreground.
+    Note: this is best-effort — Windows foreground lock can prevent focus steal.
+    """
+    win32gui, win32process = _try_win32()
+    psutil = _try_psutil()
+
+    if win32gui is None or win32process is None or psutil is None:
+        return True
+
+    fragments = _get_window_title_fragments(fragment)
+    expected_pids = _get_expected_pids(fragment, psutil)
+
+    # --- Check if already foreground ---
     try:
         hwnd = win32gui.GetForegroundWindow()
         if hwnd:
             title = win32gui.GetWindowText(hwnd).lower()
-            return fragment.lower() in title
+            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+
+            if pid in expected_pids or any(is_uwp_window_for_pid(hwnd, ep) for ep in expected_pids):
+                logger.info(
+                    f"[VERIFY] Window found foreground | HWND: {hwnd} | title: '{title}' | "
+                    f"PID: {pid} | Expected PIDs: {list(expected_pids)} | "
+                    f"Expected title frags: {fragments} | Matched rule: PID Match"
+                )
+                return True
+            elif any(frag in title for frag in fragments):
+                logger.info(
+                    f"[VERIFY] Window found foreground | HWND: {hwnd} | title: '{title}' | "
+                    f"PID: {pid} | Expected PIDs: {list(expected_pids)} | "
+                    f"Expected title frags: {fragments} | Matched rule: Title Match"
+                )
+                return True
+    except Exception as exc:
+        logger.warning(f"[VERIFY] GetForegroundWindow error: {exc}")
+
+    # --- Not foreground: find matching visible window and attempt focus ---
+    target_hwnd = None
+    target_title = ""
+    target_pid = 0
+    try:
+        def _cb(hwnd, _):
+            nonlocal target_hwnd, target_title, target_pid
+            if win32gui.IsWindowVisible(hwnd):
+                title = win32gui.GetWindowText(hwnd).lower()
+                _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                if (
+                    pid in expected_pids
+                    or any(is_uwp_window_for_pid(hwnd, ep) for ep in expected_pids)
+                    or any(frag in title for frag in fragments)
+                ):
+                    target_hwnd = hwnd
+                    target_title = title
+                    target_pid = pid
+                    return False  # stop enumeration
+            return True
+        win32gui.EnumWindows(_cb, None)
     except Exception:
         pass
+
+    if target_hwnd:
+        logger.info(
+            f"[VERIFY] Window not foreground — attempting focus | Target HWND: {target_hwnd} | "
+            f"title: '{target_title}' | PID: {target_pid}"
+        )
+        try:
+            from automation.applications import force_focus_window
+            focus_ok = force_focus_window(target_hwnd)
+            new_hwnd = win32gui.GetForegroundWindow()
+            new_title = win32gui.GetWindowText(new_hwnd).lower() if new_hwnd else ""
+            _, new_pid = win32process.GetWindowThreadProcessId(new_hwnd) if new_hwnd else (0, 0)
+            logger.info(
+                f"[VERIFY] Focus attempt result: {'SUCCESS' if focus_ok else 'FAILED (OS foreground lock)'} | "
+                f"Current foreground HWND: {new_hwnd} | title: '{new_title}' | PID: {new_pid} | "
+                f"Expected PIDs: {list(expected_pids)} | Expected title frags: {fragments}"
+            )
+            if focus_ok:
+                return True
+            # Focus failed due to OS lock — but window IS visible; caller decides what to do
+        except Exception as e:
+            logger.warning(f"[VERIFY] force_focus_window error: {e}")
+    else:
+        logger.info(
+            f"[VERIFY] No matching window found for '{fragment}' | "
+            f"Expected PIDs: {list(expected_pids)} | Expected title frags: {fragments} | "
+            f"Matched rule: None"
+        )
+
     return False
 
 
@@ -141,14 +338,11 @@ def verify_application_launched(app_name: str) -> VerifyResult:
         )
 
     if not _is_window_visible(name):
-        # Process is running but window hasn't appeared yet — partial pass
-        # (common in first 1-2 seconds after launch).
         logger.debug(f"[VERIFY] Process '{app_name}' running but window not yet visible.")
         return VerifyResult(
-            passed=True,
+            passed=False,
             message=(
-                f"Process '{app_name}' is running (window not yet visible — "
-                "may need wait_until_window_exists)."
+                f"Process '{app_name}' is running but window is not yet visible."
             )
         )
 
@@ -229,7 +423,7 @@ def verify_key_pressed(key: str) -> VerifyResult:
     )
 
 
-def verify_search_results_loaded(app_name: str, query: str) -> VerifyResult:
+def verify_search_results_loaded(app_name: str, query: str, hwnd: Optional[int] = None) -> VerifyResult:
     """Heuristic check that search results appeared after a search action.
 
     Currently relies on checking that the application window is still visible and
@@ -242,11 +436,21 @@ def verify_search_results_loaded(app_name: str, query: str) -> VerifyResult:
         Application in which search was performed.
     query:
         The search query submitted.
+    hwnd:
+        Optional exact window handle verified to be the application.
 
     Returns
     -------
     VerifyResult
     """
+    if hwnd is not None:
+        win32gui, _ = _try_win32()
+        if win32gui and win32gui.IsWindowVisible(hwnd):
+            return VerifyResult(
+                passed=True,
+                message=f"Search for '{query}' submitted (window handle {hwnd} still active)."
+            )
+
     if _is_window_visible(app_name):
         return VerifyResult(
             passed=True,
@@ -321,29 +525,56 @@ def dispatch_verify(tool: str, args: dict, result) -> VerifyResult:
         args.get("application")
         or args.get("app")
         or args.get("target")
+        or args.get("query")
         or ""
     ).lower().strip()
 
     # Application launch / open tools
     if tool in ("open_application", "launch_application", "resolve_and_open"):
-        opened_in_browser = getattr(result, "metadata", {}).get("opened_in_browser", False)
+        opened_in_browser = getattr(result, "metadata", {}).get("opened_in_browser", False) or getattr(result, "resource_type", "") == "website"
         reused_window = getattr(result, "metadata", {}).get("reused_window", False)
+
+        # Log full window state for diagnostics
+        all_windows = _enumerate_all_windows()
+        visible_windows = [w for w in all_windows if w["visible"] and w["title"]]
+        logger.info(f"[VERIFY] Enumerating {len(all_windows)} top-level windows ({len(visible_windows)} visible with title) for '{app}':")
+        for w in visible_windows:
+            logger.info(
+                f"  HWND={w['hwnd']} | PID={w['pid']} | title='{w['title']}' | "
+                f"visible={w['visible']} | minimized={w['minimized']} | foreground={w['foreground']}"
+            )
+
         if opened_in_browser or reused_window:
-            if not _is_window_foreground(app):
-                return VerifyResult(passed=False, message=f"Window for '{app}' is not active/foreground.")
-            return VerifyResult(passed=True, message=f"Window for '{app}' is active and foreground.")
-            
-        # Strict verification for native apps: process must exist and window must be foreground
+            # For browser/reused windows: check visibility (foreground is best-effort)
+            from automation.applications import clean_query_for_matching
+            tab_frag = clean_query_for_matching(app)
+            target_frag = tab_frag or app
+            # Best-effort focus attempt (non-blocking for verification result)
+            _is_window_foreground(target_frag)
+            # Success = window is visible, regardless of foreground status
+            if _is_window_visible(target_frag):
+                return VerifyResult(passed=True, message=f"Window for '{target_frag}' is visible and accessible.")
+            return VerifyResult(passed=False, message=f"Window for '{target_frag}' is not visible.")
+
+        # For native app launches: success = process running AND window visible.
+        # Foreground/focus is attempted as best-effort but is NOT a hard requirement
+        # (Windows foreground lock can legitimately prevent focus steal).
         v_res = verify_application_launched(app)
         if not v_res.passed:
             return v_res
-            
-        # Wait, verify_application_launched only checks _is_window_visible.
-        # Let's enforce foreground check.
-        if not _is_window_foreground(app):
-            return VerifyResult(passed=False, message=f"Application '{app}' launched but is not the active foreground window.")
-            
-        return VerifyResult(passed=True, message=f"Application '{app}' is launched and active.")
+
+        # Best-effort foreground promotion (result is logged but does not affect pass/fail)
+        fg_ok = _is_window_foreground(app)
+        logger.info(
+            f"[VERIFY] Focus attempt for '{app}': {'promoted to foreground' if fg_ok else 'window visible but not foreground (OS lock) — still SUCCESS'}"
+        )
+        return VerifyResult(
+            passed=True,
+            message=(
+                f"Application '{app}' is running with a visible window"
+                + (" and is the active foreground window." if fg_ok else " (foreground promotion blocked by OS — window is usable).")
+            )
+        )
 
     # Window focus tools
     if tool in ("focus_window", "wait_for_window"):
@@ -361,10 +592,31 @@ def dispatch_verify(tool: str, args: dict, result) -> VerifyResult:
     # In-application search
     if tool == "search_inside_application":
         query = args.get("query", "")
-        # Determine the active app from session state
+        hwnd = getattr(result, "metadata", {}).get("hwnd")
+        
+        # Check if this is a WhatsApp search
+        is_whatsapp = (
+            "whatsapp" in (app or "").lower()
+            or "whatsapp" in getattr(result, "message", "").lower()
+        )
+        if is_whatsapp:
+            try:
+                import uiautomation as auto
+                import win32gui
+                if hwnd and win32gui.IsWindowVisible(hwnd):
+                    win = auto.WindowControl(searchDepth=1, Handle=hwnd)
+                    msg_box = win.Control(searchDepth=15, Name="Type a message")
+                    if msg_box.Exists(0.5):
+                        return VerifyResult(
+                            passed=True,
+                            message=f"WhatsApp search for '{query}' verified (Chat is open)."
+                        )
+            except Exception:
+                pass
+
         from automation.desktop import get_active_app_name
         active_app = get_active_app_name() or app
-        return verify_search_results_loaded(active_app, query)
+        return verify_search_results_loaded(active_app, query, hwnd=hwnd)
 
     # Default: trust the handler's own success flag
     return verify_generic(tool, result.success)

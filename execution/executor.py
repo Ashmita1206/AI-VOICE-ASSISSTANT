@@ -197,7 +197,7 @@ class DesktopExecutor:
         _cb(f"Dispatching {step.tool}")
 
         # 1. Permission check
-        if PermissionManager.requires_confirmation(step.tool, step.args):
+        if not getattr(self, "bypass_confirmation", False) and PermissionManager.requires_confirmation(step.tool, step.args):
             logger.warning(f"Confirmation required for tool {step.tool}")
             message = PermissionManager.build_confirmation_message(step.tool, step.args)
             _cb(f"Confirmation required for {step.tool}")
@@ -341,6 +341,7 @@ class DesktopExecutor:
         while True:
             # ── VERIFYING ───────────────────────────────────────────────
             record.mark_verifying()
+            emit(f"  ⏳ Verifying {step.tool}…")
             verify_result: VerifyResult = dispatch_verify(step.tool, step.args, result)
             record.metadata["verify_result"] = {
                 "passed": verify_result.passed,
