@@ -36,6 +36,7 @@ def load_all_tools() -> None:
         import automation.desktop
         import automation.filesystem
         import automation.whatsapp
+        import automation.notepad
     except ImportError as e:
         logger.warning(f"Could not load automation tools: {e}")
         

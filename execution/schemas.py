@@ -49,6 +49,7 @@ class ExecutionResult:
     attempts: int = 1             # number of execution attempts (1 = first try)
     recovery_used: bool = False   # True if a recovery strategy was invoked
     metadata: dict[str, Any] = field(default_factory=dict)
+    saved_path: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d = {
@@ -64,6 +65,8 @@ class ExecutionResult:
             "recovery_used": self.recovery_used,
             "metadata": self.metadata,
         }
+        if self.saved_path is not None:
+            d["saved_path"] = self.saved_path
         if self.confirmation_id:
             d["confirmation_id"] = self.confirmation_id
         return d

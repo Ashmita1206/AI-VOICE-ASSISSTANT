@@ -486,6 +486,194 @@ _TOOLS: list[ToolDefinition] = [
             "required": ["target", "option"]
         }
     ),
+
+    # ── Notepad Automation Tools ──────────────────────────────────────
+
+    ToolDefinition(
+        name="notepad_open",
+        description="Open Microsoft Notepad. If Notepad is already running, brings it to the foreground. Always use this before any other notepad_ tool.",
+        parameters={
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    ),
+
+    ToolDefinition(
+        name="notepad_close",
+        description="Close the active Microsoft Notepad window.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "save_before_close": {
+                    "type": "boolean",
+                    "description": "If true, saves the file before closing. Default is false."
+                },
+                "discard_changes": {
+                    "type": "boolean",
+                    "description": "If true, discards unsaved changes without saving. Default is true."
+                },
+                "save_first": {
+                    "type": "boolean",
+                    "description": "Legacy fallback argument (equivalent to save_before_close)."
+                }
+            },
+            "required": []
+        }
+    ),
+
+    ToolDefinition(
+        name="notepad_type",
+        description="Type text into the active Notepad window. Notepad must be open first. Use this to write content.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "The text to type into Notepad."
+                }
+            },
+            "required": ["text"]
+        }
+    ),
+
+    ToolDefinition(
+        name="notepad_press_enter",
+        description="Press the Enter key inside Notepad to insert a new line.",
+        parameters={
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    ),
+
+    ToolDefinition(
+        name="notepad_select_all",
+        description="Select all text in Notepad (Ctrl+A).",
+        parameters={
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    ),
+
+    ToolDefinition(
+        name="notepad_copy",
+        description="Copy the selected text in Notepad to the clipboard (Ctrl+C).",
+        parameters={
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    ),
+
+    ToolDefinition(
+        name="notepad_paste",
+        description="Paste clipboard contents into Notepad at the current cursor position (Ctrl+V).",
+        parameters={
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    ),
+
+    ToolDefinition(
+        name="notepad_undo",
+        description="Undo the last action performed in Notepad (Ctrl+Z).",
+        parameters={
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    ),
+
+    ToolDefinition(
+        name="notepad_redo",
+        description="Redo the last undone action in Notepad (Ctrl+Y).",
+        parameters={
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    ),
+
+    ToolDefinition(
+        name="notepad_delete",
+        description="Delete the currently selected text in Notepad. If nothing is selected, selects all first then deletes.",
+        parameters={
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    ),
+
+    ToolDefinition(
+        name="notepad_clear",
+        description="Clear the entire Notepad document — removes all text content.",
+        parameters={
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    ),
+
+    ToolDefinition(
+        name="notepad_save",
+        description="Save the current Notepad file (Ctrl+S). If the file has no name yet, this may open a Save-As dialog.",
+        parameters={
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    ),
+
+    ToolDefinition(
+        name="notepad_save_as",
+        description="Save the current Notepad document with a specific filename using the Save-As dialog.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "filename": {
+                    "type": "string",
+                    "description": "The target filename, e.g. 'notes.txt'."
+                },
+                "directory": {
+                    "type": "string",
+                    "description": "Optional absolute path of the directory to save in."
+                },
+                "overwrite": {
+                    "type": "boolean",
+                    "description": "If true, replaces the file if it already exists. Otherwise fails."
+                }
+            },
+            "required": ["filename"]
+        }
+    ),
+
+    ToolDefinition(
+        name="notepad_open_file",
+        description="Open an existing file inside Notepad using the Open dialog.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "The absolute or relative path to the file to open in Notepad."
+                }
+            },
+            "required": ["path"]
+        }
+    ),
+
+    ToolDefinition(
+        name="notepad_new_file",
+        description="Create a new empty document in Notepad (Ctrl+N). Discards any unsaved changes in the current document.",
+        parameters={
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    ),
 ]
 
 # ══════════════════════════════════════════════════════════════════════
