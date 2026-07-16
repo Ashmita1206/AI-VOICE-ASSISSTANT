@@ -674,6 +674,62 @@ _TOOLS: list[ToolDefinition] = [
             "required": []
         }
     ),
+
+    # ── Context-Based Document Search ────────────────────────────────────
+
+    ToolDefinition(
+        name="find_document_by_context",
+        description=(
+            "Intelligently locate files on the local computer when the user does NOT know the "
+            "exact filename. Uses AI semantic search to match topic, project, organization, "
+            "keywords, approximate content, year, technology, person name, or any phrase. "
+            "Use this for intents like: find file, open document, search document, find PDF, "
+            "find report, find PPT, find Excel, find my old X, I need the document about Y. "
+            "Returns up to 5 ranked candidate files for the user to choose from."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": (
+                        "The user's free-form description of the document. "
+                        "Include all context clues: topic, project name, organization, "
+                        "keywords, year, technology, person name, phrases remembered. "
+                        "Example: 'CDOT proposal battery project from 2021'"
+                    )
+                },
+                "top_n": {
+                    "type": "integer",
+                    "description": "Maximum number of results to return (default 5, max 5)."
+                }
+            },
+            "required": ["query"]
+        }
+    ),
+
+    ToolDefinition(
+        name="open_document_result",
+        description=(
+            "Open one of the files returned by a previous find_document_by_context call. "
+            "Use this when the user selects a result by saying 'open number 1', "
+            "'first one', 'second', 'number 3', etc. "
+            "Always call find_document_by_context before calling this tool."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "result_number": {
+                    "type": "integer",
+                    "description": (
+                        "The 1-based index of the result to open (1 through 5). "
+                        "Map 'first' → 1, 'second' → 2, 'third' → 3, etc."
+                    )
+                }
+            },
+            "required": ["result_number"]
+        }
+    ),
 ]
 
 # ══════════════════════════════════════════════════════════════════════

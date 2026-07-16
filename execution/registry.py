@@ -37,6 +37,7 @@ def load_all_tools() -> None:
         import automation.filesystem
         import automation.whatsapp
         import automation.notepad
+        import automation.document_search_tool  # Context-based document search
     except ImportError as e:
         logger.warning(f"Could not load automation tools: {e}")
         

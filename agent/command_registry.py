@@ -533,6 +533,81 @@ _REGISTRY: list[IntentDefinition] = [
         keywords=["new", "file", "document", "create", "notepad"],
         entity_schema={},
     ),
+
+    # ── Context-Based Document Search ─────────────────────────────────────
+
+    IntentDefinition(
+        name="find_document",
+        category="document_search",
+        description=(
+            "Find or locate a file/document using context clues when the user "
+            "does not know the exact filename."
+        ),
+        patterns=[
+            IntentPattern("find {query}"),
+            IntentPattern("find my {query}"),
+            IntentPattern("find the {query}"),
+            IntentPattern("find document {query}"),
+            IntentPattern("find file {query}"),
+            IntentPattern("find report {query}"),
+            IntentPattern("find pdf {query}"),
+            IntentPattern("search for {query}"),
+            IntentPattern("search document {query}"),
+            IntentPattern("search file {query}"),
+            IntentPattern("open the {query} document"),
+            IntentPattern("open my {query} document"),
+            IntentPattern("open my {query} file"),
+            IntentPattern("open {query} document"),
+            IntentPattern("open {query} report"),
+            IntentPattern("open {query} presentation"),
+            IntentPattern("open {query} spreadsheet"),
+            IntentPattern("locate {query}"),
+            IntentPattern("locate file {query}"),
+            IntentPattern("need the {query} file"),
+            IntentPattern("need my {query}"),
+            IntentPattern("i need {query} document"),
+            IntentPattern("show me {query} document"),
+            IntentPattern("where is {query}"),
+            IntentPattern("where is my {query}"),
+        ],
+        keywords=[
+            "find", "search", "locate", "document", "file", "report",
+            "pdf", "proposal", "presentation", "ppt", "spreadsheet",
+            "excel", "docx", "word", "notebook", "notes", "invoice",
+            "project", "old", "remember", "forgot", "looking", "need",
+        ],
+        entity_schema={"query": "str"},
+    ),
+
+    IntentDefinition(
+        name="open_selected_document",
+        category="document_search",
+        description="Open a numbered result from a previous document search.",
+        patterns=[
+            IntentPattern("open number {result_number}"),
+            IntentPattern("open {result_number}"),
+            IntentPattern("select {result_number}"),
+            IntentPattern("choose {result_number}"),
+            IntentPattern("number {result_number}"),
+            IntentPattern("pick {result_number}"),
+            IntentPattern("open the first one"),
+            IntentPattern("open the second one"),
+            IntentPattern("open the third one"),
+            IntentPattern("open the fourth one"),
+            IntentPattern("open the fifth one"),
+            IntentPattern("first one"),
+            IntentPattern("second one"),
+            IntentPattern("third one"),
+            IntentPattern("fourth one"),
+            IntentPattern("fifth one"),
+        ],
+        keywords=[
+            "open", "select", "choose", "number", "first", "second",
+            "third", "fourth", "fifth", "one", "two", "three", "four", "five",
+            "pick", "result",
+        ],
+        entity_schema={"result_number": "str"},
+    ),
 ]
 
 

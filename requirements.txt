@@ -45,6 +45,14 @@ pydantic>=2.11.0
 pytest>=8.0.0
 jiwer>=3.0.0
 
+# Context-Based Document Search (feature/context-document-search)
+sentence-transformers>=2.7.0    # local semantic embeddings (all-MiniLM-L6-v2)
+PyMuPDF>=1.24.0                 # PDF text extraction (import as fitz)
+python-docx>=1.1.0              # DOCX text extraction
+python-pptx>=0.6.23             # PPTX text extraction
+openpyxl>=3.1.0                 # XLSX/XLS text extraction
+rank-bm25>=0.2.2                # BM25 ranking (with TF fallback if unavailable)
+
 # ==============================================================
 # Colab-side dependencies (colab_stt_server.ipynb installs these)
 # ==============================================================
