@@ -40,7 +40,9 @@ class ExecutionResult:
     output: str | None = None
     execution_time_ms: int = 0
     requires_confirmation: bool = False
+    requires_interaction: bool = False
     confirmation_id: str | None = None
+    data: Any = None
 
     # ── Stateful engine fields (added in feature/stateful-execution-engine) ──
     # Reflects the StepStatus value at the time this result was recorded.
@@ -59,6 +61,7 @@ class ExecutionResult:
             "output": self.output,
             "execution_time_ms": self.execution_time_ms,
             "requires_confirmation": self.requires_confirmation,
+            "requires_interaction": self.requires_interaction,
             # Stateful engine fields
             "state": self.state or ("success" if self.success else "failure"),
             "attempts": self.attempts,
@@ -69,6 +72,8 @@ class ExecutionResult:
             d["saved_path"] = self.saved_path
         if self.confirmation_id:
             d["confirmation_id"] = self.confirmation_id
+        if self.data is not None:
+            d["data"] = self.data
         return d
 
 

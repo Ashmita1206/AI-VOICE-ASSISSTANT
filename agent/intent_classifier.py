@@ -64,6 +64,24 @@ class IntentClassifier:
                 raw_text=text
             )
 
+        # 0. Strict routing for File Explorer Context Search
+        # Must not break notepad, browser, or whatsapp.
+        find_verbs = r"(find|search|locate|look\s+for|open|where\s+is|need|show\s+me)"
+        doc_nouns = r"(file(?!\s*manager)|document|report|proposal|presentation|pdf|ppt|word|excel|spreadsheet|invoice|notes?(?!pad)|notebook(?!s)|deck)"
+        if re.search(find_verbs, norm_text, re.IGNORECASE) and re.search(doc_nouns, norm_text, re.IGNORECASE):
+            # Check for negative intent words to prevent hijacking notepad or basic app launching
+            negative_words = r"\b(notepad|open\s+notes|create\s+file|edit\s+txt|write|type)\b"
+            if not re.search(negative_words, norm_text, re.IGNORECASE):
+                query_text = norm_text
+                query_text = re.sub(rf"^(?:can\s+you\s+)?{find_verbs}\s+(?:the\s+|my\s+|a\s+)?{doc_nouns}(?:s)?\s+(?:about\s+|on\s+|for\s+)?", "", query_text, flags=re.IGNORECASE)
+                query_text = re.sub(rf"^(?:can\s+you\s+)?{find_verbs}\s+(?:the\s+|my\s+|a\s+)?", "", query_text, flags=re.IGNORECASE)
+                return CommandIntent(
+                    intent="find_document_by_context",
+                    entities={"query": query_text.strip() or norm_text},
+                    confidence=1.0,
+                    raw_text=text
+                )
+
         # 1. Handle compound commands (e.g. "open chrome and search ml")
         # We split by " and " (which is the normalised form of "aur", etc.)
         parts = [p.strip() for p in norm_text.split(" and ") if p.strip()]

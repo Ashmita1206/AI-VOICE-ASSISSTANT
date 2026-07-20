@@ -392,8 +392,14 @@ async function consumeSSEStream(body) {
 // ══════════════════════════════════════════════════════════════════════
 
 function handleSSEEvent(event) {
-  console.log("[FRONTEND] Received JSON:", event);
+  console.log("================================================================================");
+  console.log("[FRONTEND] Received SSE Event");
+  console.log("[FRONTEND] Full event:", JSON.stringify(event, null, 2));
   const { stage, status, data, message } = event;
+  console.log("[FRONTEND] Stage:", stage);
+  console.log("[FRONTEND] Status:", status);
+  console.log("[FRONTEND] Message:", message);
+  console.log("[FRONTEND] Data:", data);
 
   switch (stage) {
 
@@ -527,7 +533,9 @@ function handleSSEEvent(event) {
 
     // ── Execution ───────────────────────────────────────────────────
     case 'execution': {
+      console.log("[FRONTEND] Execution case - status:", status);
       if (status === 'processing' || status === 'running') {
+        console.log("[FRONTEND] Execution processing/running");
         revealSection('sec-execution');
         setSectionState('sec-execution', 'processing');
         appendExecLogRow(message || '…', 'running');
@@ -545,9 +553,60 @@ function handleSSEEvent(event) {
         console.log('Executing: ' + (message || '…'));
 
       } else if (status === 'completed') {
-        console.log('Execution finished');
+        console.log("[FRONTEND] Execution completed");
+        console.log("[FRONTEND] Execution data:", data);
+        console.log("[FRONTEND] Execution steps:", data?.steps);
         setSectionState('sec-execution', 'completed');
         finaliseExecLog(data?.steps);
+        
+        // Check for file search results
+        console.log("[FRONTEND] Checking for file search results...");
+        if (data && data.steps) {
+            console.log("[FRONTEND] Steps found:", data.steps.length);
+            for (const step of data.steps) {
+                console.log("[FRONTEND] Checking step:", step);
+                console.log("[FRONTEND] Step tool:", step.tool);
+                let results = null;
+                if (step.tool === 'find_document_by_context') {
+                    console.log("[FRONTEND] Found	find_document_by_context step");
+                    console.log("[FRONTEND] Step data:", step.data);
+                    console.log("[FRONTEND] Step output:", step.output);
+                    if (step.data && step.data.results && step.data.results.length > 0) {
+                        results = step.data.results;
+                        console.log("[FRONTEND] Results found in step.data.results:", results.length);
+                    } else if (step.output && Array.isArray(step.output) && step.output.length > 0) {
+                        results = step.output;
+                        console.log("[FRONTEND] Results found in step.output:", results.length);
+                    } else if (step.output && typeof step.output === 'string') {
+                        try {
+                            const parsed = JSON.parse(step.output);
+                            if (Array.isArray(parsed) && parsed.length > 0) {
+                                results = parsed;
+                                console.log("[FRONTEND] Results found in parsed step.output:", results.length);
+                            }
+                        } catch (e) {
+                            console.error('[FRONTEND] Failed to parse step.output:', e);
+                        }
+                    }
+                }
+                if (results) {
+                    console.log("[FRONTEND] Calling showFileSearchModal with results:", results);
+                    console.log("[FRONTEND] showFileSearchModal type:", typeof showFileSearchModal);
+                    if (typeof showFileSearchModal === 'function') {
+                        console.log("[FRONTEND] showFileSearchModal is a function, calling it...");
+                        showFileSearchModal(results);
+                        console.log("[FRONTEND] Returned from showFileSearchModal");
+                    } else {
+                        console.error('[FRONTEND] showFileSearchModal is not a function!');
+                    }
+                } else {
+                    console.log("[FRONTEND] No results found in this step");
+                }
+            }
+        } else {
+            console.log("[FRONTEND] No steps data found");
+        }
+        
         // Show completion result row
         appendExecLogRow('Execution Completed ✓', 'success');
         statusText.textContent = 'Execution complete ✓';
@@ -615,8 +674,11 @@ function handleSSEEvent(event) {
         // Audit execution results to determine overall success/failure
         const executionSteps = data && data.execution ? data.execution : [];
         const taskSuccess = executionSteps.every(step => step.success !== false);
+        const requiresInteraction = executionSteps.some(step => step.requires_interaction);
         
-        if (taskSuccess) {
+        if (requiresInteraction) {
+          transitionTo(FSM_STATES.IDLE);
+        } else if (taskSuccess) {
           transitionTo(FSM_STATES.COMPLETED);
           showCompletionPopup(data, true);
         } else {
@@ -1291,3 +1353,93 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 });
 
+// File Search Modal logic
+function showFileSearchModal(results) {
+  console.log("================================================================================");
+  console.log("[MODAL] ENTER showFileSearchModal");
+  console.log("[MODAL] Results received:", results);
+  console.log("[MODAL] Results count:", results ? results.length : 0);
+  
+  const modal = document.getElementById('file-search-modal');
+  const resultsContainer = document.getElementById('file-search-results');
+  const actionsContainer = document.getElementById('file-search-actions');
+  
+  console.log("[MODAL] Modal element:", modal);
+  console.log("[MODAL] Results container:", resultsContainer);
+  console.log("[MODAL] Actions container:", actionsContainer);
+  
+  if (!modal || !resultsContainer || !actionsContainer) {
+    console.error("[MODAL] Missing required elements:");
+    if (!modal) console.error("[MODAL] - modal is null");
+    if (!resultsContainer) console.error("[MODAL] - resultsContainer is null");
+    if (!actionsContainer) console.error("[MODAL] - actionsContainer is null");
+    return;
+  }
+  
+  console.log("[MODAL] All elements found, clearing containers");
+  resultsContainer.innerHTML = '';
+  actionsContainer.innerHTML = '';
+  
+  console.log("[MODAL] Processing results...");
+  results.forEach((res, index) => {
+    console.log(`[MODAL] Processing result ${index + 1}:`, res);
+    const num = index + 1;
+    const div = document.createElement('div');
+    div.style.padding = '12px';
+    div.style.border = '1px solid var(--border, #eee)';
+    div.style.borderRadius = '8px';
+    div.style.background = '#fafafa';
+    
+    div.innerHTML = `
+      <div style="font-weight: 600; color: var(--primary, #007bff); cursor: pointer;" onclick="simulateUserCommand('Open number ${num}')">${num}. ${res.filename}</div>
+      <div style="font-size: 0.85rem; color: #555; margin-top: 4px;">Folder: ${res.folder_path || res.folder}</div>
+      <div style="font-size: 0.85rem; color: #555;">Modified: ${res.modified_date || (res.modified_ts ? new Date(res.modified_ts * 1000).toDateString() : 'N/A')}</div>
+      <div style="font-size: 0.85rem; color: #555;">Confidence: ${res.confidence || (res.score ? Math.round(res.score * 100) + '%' : 'N/A')}</div>
+    `;
+    resultsContainer.appendChild(div);
+    console.log(`[MODAL] Added result ${num} to container`);
+    
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-primary';
+    btn.style.padding = '6px 12px';
+    btn.style.fontSize = '0.85rem';
+    btn.textContent = `Open number ${num}`;
+    btn.onclick = () => {
+      console.log(`[MODAL] Button ${num} clicked, hiding modal and simulating command`);
+      modal.style.display = 'none';
+      simulateUserCommand(`Open number ${num}`);
+    };
+    actionsContainer.appendChild(btn);
+    console.log(`[MODAL] Added button ${num} to actions`);
+  });
+  
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'btn btn-cancel-action';
+  cancelBtn.style.padding = '6px 12px';
+  cancelBtn.style.fontSize = '0.85rem';
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.onclick = () => {
+    console.log("[MODAL] Cancel button clicked, hiding modal");
+    modal.style.display = 'none';
+  };
+  actionsContainer.appendChild(cancelBtn);
+  console.log("[MODAL] Added cancel button");
+
+  console.log("[MODAL] Setting modal display to flex");
+  modal.style.display = 'flex';
+  console.log("[MODAL] Modal display style:", modal.style.display);
+  console.log("[MODAL] Modal visibility:", modal.style.visibility);
+  console.log("[MODAL] Modal computed style:", window.getComputedStyle(modal).display);
+  console.log("[MODAL] EXIT showFileSearchModal");
+}
+
+async function simulateUserCommand(text) {
+  try {
+    const formData = new FormData();
+    formData.append('text', text);
+    const res = await fetch('/transcribe_stream', { method: 'POST', body: formData });
+    if (res.ok) await consumeSSEStream(res.body);
+  } catch(e) {
+    console.error(e);
+  }
+}

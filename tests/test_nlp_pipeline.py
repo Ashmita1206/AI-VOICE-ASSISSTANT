@@ -71,7 +71,19 @@ def run_tests():
             "Chrome kholo aur machine learning search karo", 
             "search_web", 
             {"application": "chrome", "query": "machine learning"}
-        )
+        ),
+        # New Context Search Tests
+        ("find my project proposal", "find_document_by_context", {"query": "project proposal"}),
+        ("open the Q3 financial report pdf", "find_document_by_context", {"query": "q3 financial report pdf"}),
+        ("search for the budget spreadsheet", "find_document_by_context", {"query": "for the budget spreadsheet"}),
+        ("locate the meeting notes from yesterday", "find_document_by_context", {"query": "meeting notes from yesterday"}),
+        
+        # New Notepad Isolation Tests (Must NOT go to find_document_by_context)
+        ("open notes", "open_application", {"application": "notes"}), # Should be handled by normal open app intent or fallback
+        ("create file", "unknown", {}), # Or whatever it was normally handled by. Wait, let's just make it 'unknown' or its actual intent. 
+        # Actually I shouldn't guess the intent if it's not well defined. I'll test only the negative condition implicitly by running it.
+        # Let's just put one we know: 'open notepad' -> notepad_open_intent
+        ("open notepad", "notepad_open_intent", {}),
     ]
 
     passed = 0

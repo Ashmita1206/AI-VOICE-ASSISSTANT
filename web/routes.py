@@ -56,9 +56,29 @@ def transcribe():
 
 @api.route("/transcribe_stream", methods=["POST"])
 def transcribe_stream():
-    """Receive audio and stream pipeline progress as Server-Sent Events."""
+    """Receive audio or text and stream pipeline progress as Server-Sent Events."""
+    text_input = request.form.get("text")
+    if text_input:
+        def generate_text_stream():
+            try:
+                yield from run_pipeline_stream(text=text_input)
+            except Exception as exc:
+                logger.exception("Streaming pipeline error (text)")
+                import json
+                yield f'data: {{"stage":"done","status":"error","message":{json.dumps(str(exc))}}}\n\n'
+                
+        return Response(
+            stream_with_context(generate_text_stream()),
+            mimetype="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                "Connection": "keep-alive",
+            },
+        )
+
     if "audio" not in request.files:
-        return jsonify({"error": "No audio file provided."}), 400
+        return jsonify({"error": "No audio or text provided."}), 400
 
     audio_file = request.files["audio"]
 
@@ -78,7 +98,7 @@ def transcribe_stream():
 
     def generate_and_cleanup():
         try:
-            yield from run_pipeline_stream(temp_path)
+            yield from run_pipeline_stream(audio_path=temp_path)
         except Exception as exc:
             logger.exception("Streaming pipeline error")
             import json

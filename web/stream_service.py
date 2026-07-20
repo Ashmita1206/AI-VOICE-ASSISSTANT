@@ -102,7 +102,22 @@ def _sse(stage: str, status: str, data: Any = None, message: str | None = None) 
         payload["message"] = message
     serialized = json.dumps(payload, ensure_ascii=False)
     safe_serialized = serialized.encode("ascii", "replace").decode("ascii")
-    print(f"[DEBUG BACKEND RESPONSE] Stage: {stage} | Status: {status} | Payload: {safe_serialized[:1000]}")
+    print("=" * 80)
+    print(f"[SSE DEBUG] EMITTING EVENT")
+    print(f"[SSE DEBUG] Stage: {stage}")
+    print(f"[SSE DEBUG] Status: {status}")
+    print(f"[SSE DEBUG] Message: {message}")
+    print(f"[SSE DEBUG] Data keys: {list(data.keys()) if data else 'None'}")
+    if stage == "execution" and status == "completed":
+        print(f"[SSE DEBUG] Execution data structure:")
+        if data and "steps" in data:
+            print(f"[SSE DEBUG] Steps count: {len(data['steps'])}")
+            for i, step in enumerate(data["steps"]):
+                print(f"[SSE DEBUG] Step {i}: tool={step.get('tool')}, requires_interaction={step.get('requires_interaction')}")
+                if step.get("data") and "results" in step.get("data", {}):
+                    print(f"[SSE DEBUG] Step {i} has results: {len(step['data'].get('results', []))}")
+    print(f"[SSE DEBUG] Payload (first 500 chars): {safe_serialized[:500]}")
+    print(f"[SSE DEBUG] Full payload length: {len(safe_serialized)}")
     return f"data: {serialized}\n\n"
 
 
@@ -110,13 +125,13 @@ def _sse(stage: str, status: str, data: Any = None, message: str | None = None) 
 # Main streaming generator
 # ══════════════════════════════════════════════════════════════════════
 
-def run_pipeline_stream(audio_path: str) -> Generator[str, None, None]:
+def run_pipeline_stream(audio_path: str | None = None, text: str | None = None) -> Generator[str, None, None]:
     """
     Generator that runs the full pipeline and yields SSE events.
 
     Usage in Flask route:
         return Response(
-            stream_with_context(run_pipeline_stream(temp_path)),
+            stream_with_context(run_pipeline_stream(audio_path=temp_path)),
             mimetype="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
@@ -124,26 +139,40 @@ def run_pipeline_stream(audio_path: str) -> Generator[str, None, None]:
     pipeline_start = time.perf_counter()
 
     # ── Step 1: STT ──────────────────────────────────────
-    yield _sse("transcript", "processing", message="Transcribing audio…")
+    if text is not None:
+        transcription = text
+        stt_metrics = {
+            "model": "text-input",
+            "device": "cpu",
+            "compute_type": "none",
+            "language": "en",
+            "confidence": 100,
+            "processing_time_ms": 0,
+        }
+        yield _sse("transcript", "completed", data={
+            "text": transcription,
+            "stt": stt_metrics,
+        })
+    else:
+        yield _sse("transcript", "processing", message="Transcribing audio...")
 
-    stt = get_stt()
-    mode_label = "REMOTE" if config.STT_USE_REMOTE else "LOCAL"
-    print(f"[VOICE] Sending audio to {mode_label} STT…")
-    t_stt = time.perf_counter()
-    stt_result = stt.transcribe(audio_path)
-    stt_ms = int((time.perf_counter() - t_stt) * 1000)
-    print(f"[REMOTE STT] Upload complete | Latency: {stt_ms} ms")
-    transcription = stt_result.get("text", "")
-    print(f"[REMOTE STT] Text: \"{transcription[:120]}\"")
+        stt = get_stt()
+        mode_label = "REMOTE" if config.STT_USE_REMOTE else "LOCAL"
+        logger.info("[PIPELINE][STT] Stage START  mode=%s  file=%s", mode_label, audio_path)
+        t_stt = time.perf_counter()
+        stt_result = stt.transcribe(audio_path)
+        stt_ms = int((time.perf_counter() - t_stt) * 1000)
+        transcription = stt_result.get("text", "")
+        logger.info("[PIPELINE][STT] Stage DONE  latency_ms=%d  text=%r", stt_ms, transcription[:120])
 
-    stt_metrics = {
-        "model": config.STT_MODEL_ID,
-        "device": config.DEVICE,
-        "compute_type": config.COMPUTE_TYPE,
-        "language": stt_result.get("language", ""),
-        "confidence": round(stt_result.get("language_probability", 0) * 100, 1),
-        "processing_time_ms": int(stt_result.get("processing_time", 0) * 1000),
-    }
+        stt_metrics = {
+            "model": config.STT_MODEL_ID,
+            "device": config.DEVICE,
+            "compute_type": config.COMPUTE_TYPE,
+            "language": stt_result.get("language", ""),
+            "confidence": round(stt_result.get("language_probability", 0) * 100, 1),
+            "processing_time_ms": int(stt_result.get("processing_time", 0) * 1000),
+        }
 
     # Update app context silently
     if transcription.strip():
@@ -183,14 +212,15 @@ def run_pipeline_stream(audio_path: str) -> Generator[str, None, None]:
         return
 
     # ── Step 2: Intent Classification ──────────────────────────
-    yield _sse("intent", "processing", message="Classifying intent…")
+    yield _sse("intent", "processing", message="Classifying intent...")
 
     classifier = get_classifier()
+    logger.info("[PIPELINE][INTENT] Stage START  text=%r", transcription[:80])
     t_intent = time.perf_counter()
     command = classifier.classify(transcription)
     intent_ms = int((time.perf_counter() - t_intent) * 1000)
-    print(f"[INTENT] Detected: {command.intent} (Confidence: {round(command.confidence * 100, 1)}%)  [{intent_ms} ms]")
-    print(f"[ENTITY] Detected: {command.entities}")
+    logger.info("[PIPELINE][INTENT] Stage DONE  intent=%s  confidence=%.1f%%  entities=%s  latency_ms=%d",
+                command.intent, command.confidence * 100, command.entities, intent_ms)
     intent_data = {
         "name": command.intent,
         "confidence": round(command.confidence * 100, 1),
@@ -208,8 +238,8 @@ def run_pipeline_stream(audio_path: str) -> Generator[str, None, None]:
     yield _sse("discovery", "completed", message="System context ready")
 
     # ── Step 5: Planning ─────────────────────────────────────
-    yield _sse("planner", "processing", message="Building execution plan…")
-    print(f"[REMOTE LLM] Sending to planner...")
+    yield _sse("planner", "processing", message="Building execution plan...")
+    logger.info("[PIPELINE][PLANNER] Stage START  transcription=%r", transcription[:80])
     t_plan = time.perf_counter()
 
     from agentic.llm.manager import get_planner_manager
@@ -218,9 +248,12 @@ def run_pipeline_stream(audio_path: str) -> Generator[str, None, None]:
 
     planner = get_planner_manager()
     planner_output: PlannerOutput = planner.plan(transcription)
-    print(f"[DEBUG PLANNER OUTPUT]: {json.dumps(planner_output.to_dict(), indent=2)}")
     plan_ms = int((time.perf_counter() - t_plan) * 1000)
-    print(f"[REMOTE LLM] Plan received in {plan_ms} ms")
+    logger.info("[PIPELINE][PLANNER] Stage DONE  latency_ms=%d  steps=%d  intent=%s",
+                plan_ms, len(planner_output.steps), planner_output.intent)
+    for _si, _s in enumerate(planner_output.steps, 1):
+        logger.info("[PIPELINE][PLANNER]   Step %d: tool=%s  args=%s", _si, _s.tool, _s.args)
+    logger.debug("[PIPELINE][PLANNER] Full output: %s", json.dumps(planner_output.to_dict(), indent=2))
 
     # ── Step 5.5: Plan Validation ───────────────────────────────────
     validation_error = validate_execution_plan(planner_output)
@@ -405,7 +438,12 @@ def run_confirmation_stream(confirmation_id: str, edited_steps: list[dict] | Non
         response=""
     )
     
-    yield _sse("execution", "running", message="Starting execution…")
+    logger.info("[PIPELINE][EXEC] Stage START  steps=%d  confirmation_id=%s",
+                len(plan_steps), confirmation_id)
+    for _si, _s in enumerate(plan_steps, 1):
+        logger.info("[PIPELINE][EXEC]   Step %d: tool=%s  args=%s", _si, _s.tool, _s.args)
+    
+    yield _sse("execution", "running", message="Starting execution...")
     logger.info(f"Dispatching plan with {len(plan_steps)} steps to executor...")
     
     try:
@@ -458,6 +496,8 @@ def run_confirmation_stream(confirmation_id: str, edited_steps: list[dict] | Non
         return
         
     exec_results = exec_results_holder[0] if exec_results_holder else []
+    print(f"[SSE DEBUG] Execution results holder: {len(exec_results_holder)} results")
+    print(f"[SSE DEBUG] Yielding execution completed with {len(exec_results)} steps")
     yield _sse("execution", "completed", data={"steps": exec_results})
     
     # Step 7: Response Generation + TTS

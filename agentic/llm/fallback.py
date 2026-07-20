@@ -16,6 +16,23 @@ def apply_heuristic_fallback(transcription: str) -> PlannerOutput:
     from agentic.memory.session_state import get_session
     session = get_session()
     
+    # Rule 0: File Explorer Context Search
+    find_verbs = r"(find|search|locate|look\s+for|open|where\s+is|need|show\s+me)"
+    doc_nouns = r"(file(?!\s*manager)|document|report|proposal|presentation|pdf|ppt|word|excel|spreadsheet|invoice|notes?(?!pad)|notebook(?!s)|deck)"
+    if re.search(find_verbs, text) and re.search(doc_nouns, text):
+        negative_words = r"\b(notepad|open\s+notes|create\s+file|edit\s+txt|write|type)\b"
+        if not re.search(negative_words, text):
+            query_text = text
+            query_text = re.sub(rf"^(?:can\s+you\s+)?{find_verbs}\s+(?:the\s+|my\s+|a\s+)?{doc_nouns}(?:s)?\s+(?:about\s+|on\s+|for\s+)?", "", query_text)
+            query_text = re.sub(rf"^(?:can\s+you\s+)?{find_verbs}\s+(?:the\s+|my\s+|a\s+)?", "", query_text)
+            
+            return PlannerOutput(
+                intent="find_document_by_context",
+                confidence=0.95,
+                reasoning="Matched explicit File Explorer Context Search pattern.",
+                steps=[PlannerStep(tool="find_document_by_context", args={"query": query_text.strip() or text})]
+            )
+
     # Rule 1: Get active window
     if text in ("get active window", "check active window", "what is the active window", "what app is open", "what app is active"):
         return PlannerOutput(
@@ -165,6 +182,17 @@ def apply_heuristic_fallback(transcription: str) -> PlannerOutput:
                 PlannerStep(tool="launch_application", args={"application": "chrome"}, wait_for="ui_ready", timeout=60),
                 PlannerStep(tool="search_inside_application", args={"query": query})
             ]
+        )
+
+    # Rule 6.5: Open selected search result
+    open_number_match = re.match(r"(?:open\s+)?(?:number|result)\s+(one|two|three|four|five|\d+)", text)
+    if open_number_match:
+        num_str = open_number_match.group(1).strip()
+        return PlannerOutput(
+            intent="open_selected_document",
+            confidence=0.95,
+            reasoning=f"Matched open selected result: {num_str}",
+            steps=[PlannerStep(tool="find_document_by_context", args={"result_number": num_str})]
         )
 
     # Rule 7: Open/launch resource dynamically (e.g. "open chatgpt", "launch vs code")
