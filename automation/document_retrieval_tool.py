@@ -41,7 +41,7 @@ def parse_result_number(val: Any) -> Optional[int]:
         return WORD_TO_NUM.get(match.group(1))
     try:
         num = int(val_str)
-        if 1 <= num <= 10:
+        if 1 <= num <= 100:
             return num
     except (ValueError, TypeError):
         pass

@@ -102,51 +102,55 @@ class DocumentRetrievalManager:
             try:
                 print(f"[DOC LAUNCH AUDIT] Launching via: os.startfile('{norm_path}')")
                 os.startfile(norm_path)
-                launched = True
                 print("[DOC LAUNCH AUDIT] os.startfile executed successfully.")
                 logger.info("[DOC LAUNCH AUDIT] os.startfile executed for: %s", norm_path)
+                print("=" * 60)
+                return True
             except Exception as e:
                 import traceback
                 tb = traceback.format_exc()
                 print(f"[DOC LAUNCH AUDIT] Exception in os.startfile: {e}\n{tb}")
                 logger.warning("[DOC LAUNCH AUDIT] os.startfile exception: %s", e)
 
-        # Method 2: ShellExecuteW
+        # Method 2: ShellExecuteW (fallback if os.startfile failed)
         try:
             import ctypes
             print(f"[DOC LAUNCH AUDIT] Launching via: ShellExecuteW('{norm_path}')")
             ret = ctypes.windll.shell32.ShellExecuteW(None, "open", norm_path, None, None, 1)
             print(f"[DOC LAUNCH AUDIT] ShellExecuteW return code: {ret}")
             if ret > 32:
-                launched = True
+                print("=" * 60)
+                return True
         except Exception as e:
             import traceback
             tb = traceback.format_exc()
             print(f"[DOC LAUNCH AUDIT] Exception in ShellExecuteW: {e}\n{tb}")
             logger.warning("[DOC LAUNCH AUDIT] ShellExecuteW exception: %s", e)
 
-        # Method 3: subprocess cmd /c start "" "path"
+        # Method 3: subprocess cmd /c start "" "path" (fallback if ShellExecuteW failed)
         try:
             import subprocess
             print(f'[DOC LAUNCH AUDIT] Launching via: subprocess cmd start "" "{norm_path}"')
             subprocess.Popen(f'cmd /c start "" "{norm_path}"', shell=True)
-            launched = True
             print("[DOC LAUNCH AUDIT] cmd start process spawned successfully.")
             logger.info("[DOC LAUNCH AUDIT] cmd start spawned for: %s", norm_path)
+            print("=" * 60)
+            return True
         except Exception as e:
             import traceback
             tb = traceback.format_exc()
             print(f"[DOC LAUNCH AUDIT] Exception in cmd start: {e}\n{tb}")
             logger.warning("[DOC LAUNCH AUDIT] cmd start exception: %s", e)
 
-        # Method 4: subprocess explorer.exe "path"
+        # Method 4: subprocess explorer.exe "path" (fallback if cmd start failed)
         try:
             import subprocess
             print(f'[DOC LAUNCH AUDIT] Launching via: subprocess explorer.exe "{norm_path}"')
             subprocess.Popen(["explorer.exe", norm_path])
-            launched = True
             print("[DOC LAUNCH AUDIT] explorer.exe process spawned successfully.")
             logger.info("[DOC LAUNCH AUDIT] explorer.exe spawned for: %s", norm_path)
+            print("=" * 60)
+            return True
         except Exception as e:
             import traceback
             tb = traceback.format_exc()
@@ -154,4 +158,4 @@ class DocumentRetrievalManager:
             logger.warning("[DOC LAUNCH AUDIT] explorer.exe exception: %s", e)
 
         print("=" * 60)
-        return launched
+        return False

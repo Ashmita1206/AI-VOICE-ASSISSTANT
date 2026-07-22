@@ -469,10 +469,12 @@ class TestFindDocumentTool:
             )
         ]
 
-        with patch("agentic.document_search.manager.DocumentSearchManager.find_documents",
+        with patch("agentic.file_context_search.manager.DocumentSearchManager.find_documents",
                    return_value=mock_results):
-            with patch("agentic.document_search.manager.DocumentSearchManager.start_indexer"):
-                result = find_document_by_context({"query": "CDOT proposal"})
+            with patch("agentic.document_search.manager.DocumentSearchManager.find_documents",
+                       return_value=mock_results):
+                with patch("agentic.document_search.manager.DocumentSearchManager.start_indexer"):
+                    result = find_document_by_context({"query": "CDOT proposal"})
 
         assert result.success is True
         assert result.output is not None
@@ -523,7 +525,6 @@ class TestOpenDocumentResult:
     def test_opens_correct_file(self):
         from automation.document_search_tool import open_document_result
         from agentic.memory.session_state import get_session
-        from execution.schemas import ExecutionResult
 
         session = get_session()
         session.pending_document_results = [
@@ -531,14 +532,12 @@ class TestOpenDocumentResult:
             {"rank": 2, "path": "/docs/proposal.docx", "filename": "proposal.docx"},
         ]
 
-        mock_result = ExecutionResult(success=True, tool="open_file", message="Opened.")
-
-        with patch("automation.filesystem.open_file", return_value=mock_result) as mock_open:
-            result = open_document_result({"result_number": 2})
+        with patch("os.path.exists", return_value=True):
+            with patch("agentic.document_retrieval.manager.DocumentRetrievalManager.open_result", return_value=True) as mock_open:
+                result = open_document_result({"result_number": 2})
 
         assert result.success is True
-        # Verify it called open_file with the second result's path
-        mock_open.assert_called_once_with({"path": "/docs/proposal.docx"})
+        mock_open.assert_called_once_with("/docs/proposal.docx")
 
     def test_ordinal_word_mapping(self):
         """Verify that string numbers like '2' are parsed correctly."""
