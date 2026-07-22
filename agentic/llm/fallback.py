@@ -192,11 +192,23 @@ def apply_heuristic_fallback(transcription: str) -> PlannerOutput:
     )
     if open_number_match and not any(kw in text.lower() for kw in ["healthsphere", "money", "mentor", "pdf", "docx", "pptx", "xlsx"]):
         num_str = open_number_match.group(2).strip()
+        is_confirmed = "confirm" in text or "approved" in text
         return PlannerOutput(
             intent="open_selected_document",
             confidence=0.95,
-            reasoning=f"Matched open selected result: {num_str}",
-            steps=[PlannerStep(tool="find_document_by_context", args={"result_number": num_str})]
+            reasoning=f"Matched open selected result: {num_str} (confirmed={is_confirmed})",
+            steps=[PlannerStep(tool="find_document_by_context", args={"result_number": num_str, "confirmed": is_confirmed})]
+        )
+
+    # Rule 6.6: Confirmed document opening command
+    if ("confirm" in text or "approved" in text) and any(w in text for w in ("open", "doc", "document", "file", "result")):
+        num_match = re.search(r"(\d+|one|two|three|four|five|1st|2nd|3rd|4th|5th)", text)
+        num_str = num_match.group(1) if num_match else "1"
+        return PlannerOutput(
+            intent="open_selected_document",
+            confidence=0.95,
+            reasoning=f"Matched confirmed document opening: {num_str}",
+            steps=[PlannerStep(tool="find_document_by_context", args={"result_number": num_str, "confirmed": True})]
         )
 
     # Rule 7: Open/launch resource dynamically (e.g. "open chatgpt", "launch vs code")

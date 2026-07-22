@@ -571,8 +571,11 @@ function handleSSEEvent(event) {
                     console.log("[FRONTEND] Found	find_document_by_context step");
                     console.log("[FRONTEND] Step data:", step.data);
                     console.log("[FRONTEND] Step output:", step.output);
-                    if (step.data && step.data.opened && step.data.path) {
-                        console.log("[FRONTEND] Document opened by backend. Opening in browser tab:", step.data.path);
+                    if (step.data && step.data.action === 'open_permission_required') {
+                        console.log("[FRONTEND] Document open permission required:", step.data);
+                        showOpenConfirmationModal(step.data);
+                    } else if (step.data && step.data.opened && step.data.path) {
+                        console.log("[FRONTEND] Document opened by backend after confirmation. Opening in browser tab:", step.data.path);
                         window.open(`/view_document?path=${encodeURIComponent(step.data.path)}`, '_blank');
                     }
                     if (step.data && step.data.results && step.data.results.length > 0) {
@@ -1409,11 +1412,8 @@ function showFileSearchModal(results) {
     btn.style.fontSize = '0.85rem';
     btn.textContent = `Open number ${num}`;
     btn.onclick = () => {
-      console.log(`[MODAL] Button ${num} clicked, hiding modal, opening document in browser tab and simulating command`);
+      console.log(`[MODAL] Button ${num} clicked, hiding search modal and requesting permission`);
       modal.style.display = 'none';
-      if (res && res.path) {
-        window.open(`/view_document?path=${encodeURIComponent(res.path)}`, '_blank');
-      }
       simulateUserCommand(`Open number ${num}`);
     };
     actionsContainer.appendChild(btn);
@@ -1435,10 +1435,75 @@ function showFileSearchModal(results) {
   console.log("[MODAL] Setting modal display to flex");
   modal.classList.remove('hidden');
   modal.style.display = 'flex';
-  console.log("[MODAL] Modal display style:", modal.style.display);
-  console.log("[MODAL] Modal visibility:", modal.style.visibility);
-  console.log("[MODAL] Modal computed style:", window.getComputedStyle(modal).display);
   console.log("[MODAL] EXIT showFileSearchModal");
+}
+
+function showOpenConfirmationModal(data) {
+  const modal = document.getElementById('file-search-modal');
+  if (!modal) return;
+
+  const resultsContainer = document.getElementById('file-search-results');
+  const actionsContainer = document.getElementById('file-search-actions');
+  if (!resultsContainer || !actionsContainer) return;
+
+  resultsContainer.innerHTML = '';
+  actionsContainer.innerHTML = '';
+
+  const titleDiv = document.createElement('div');
+  titleDiv.style.marginBottom = '12px';
+  titleDiv.style.fontSize = '1.1rem';
+  titleDiv.style.fontWeight = 'bold';
+  titleDiv.style.color = '#333';
+  titleDiv.textContent = 'Permission Required: Open Document';
+  resultsContainer.appendChild(titleDiv);
+
+  const card = document.createElement('div');
+  card.style.padding = '16px';
+  card.style.border = '1px solid #cce5ff';
+  card.style.borderRadius = '8px';
+  card.style.background = '#f8f9fa';
+  card.style.lineHeight = '1.6';
+
+  card.innerHTML = `
+    <div style="font-size: 0.95rem; color: #555; margin-bottom: 8px;">You are about to open:</div>
+    <div style="font-size: 1.1rem; font-weight: 700; color: #0056b3; margin-bottom: 8px;" id="confirm-doc-filename">${data.filename}</div>
+    <div style="font-size: 0.85rem; color: #495057; word-break: break-all; margin-bottom: 4px;" id="confirm-doc-path"><strong>Location:</strong> ${data.path}</div>
+    <div style="font-size: 0.85rem; color: #495057; margin-bottom: 12px;"><strong>Type:</strong> ${data.extension} &nbsp;|&nbsp; <strong>Size:</strong> ${data.size}</div>
+    <div style="font-size: 0.95rem; font-weight: 600; color: #212529;">Do you want to continue?</div>
+  `;
+  resultsContainer.appendChild(card);
+
+  const openBtn = document.createElement('button');
+  openBtn.className = 'btn btn-primary';
+  openBtn.id = 'btn-confirm-open';
+  openBtn.style.padding = '8px 18px';
+  openBtn.style.fontSize = '0.9rem';
+  openBtn.textContent = 'Open';
+  openBtn.onclick = () => {
+    console.log(`[CONFIRM MODAL] User clicked Open for ${data.filename}`);
+    modal.style.display = 'none';
+    simulateUserCommand(`confirm open document ${data.result_number}`);
+  };
+  actionsContainer.appendChild(openBtn);
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'btn btn-cancel-action';
+  cancelBtn.id = 'btn-confirm-cancel';
+  cancelBtn.style.padding = '8px 18px';
+  cancelBtn.style.fontSize = '0.9rem';
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.onclick = () => {
+    console.log(`[CONFIRM MODAL] User clicked Cancel for ${data.filename}`);
+    modal.style.display = 'none';
+    appendExecLogRow('Cancelled document opening.', 'info');
+    if (typeof statusText !== 'undefined' && statusText) {
+      statusText.textContent = 'Execution complete ✓';
+    }
+  };
+  actionsContainer.appendChild(cancelBtn);
+
+  modal.classList.remove('hidden');
+  modal.style.display = 'flex';
 }
 
 async function simulateUserCommand(text) {

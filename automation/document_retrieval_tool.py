@@ -95,60 +95,74 @@ def find_document_by_context(args: dict[str, Any]) -> ExecutionResult:
                 tool="find_document_by_context"
             )
 
+        # ── SECURITY CHECK: ONLY OPEN FROM PREVIOUS SEARCH RESULTS ────────────
         chosen = pending[result_num - 1]
-        file_path = chosen.get("path", "")
+        file_path = os.path.abspath(chosen.get("path", ""))
         filename = chosen.get("filename", os.path.basename(file_path) if file_path else "file")
 
-        logger.info("[DOC OPEN] Resolved path : %s", file_path)
-        print(f"[DOC OPEN] Resolved path : {file_path}")
+        logger.info("[DOC OPEN] Resolved path from pending results: %s", file_path)
+        print(f"[DOC OPEN] Resolved path from pending results: {file_path}")
 
         exists = bool(file_path and os.path.exists(file_path))
-        logger.info("[DOC OPEN] Exists : %s", exists)
-        print(f"[DOC OPEN] Exists : {exists}")
-
-        # ── PATH VALIDATION ────────────────────────────────────────────────
         if not exists:
-            logger.warning("[DOC OPEN] File path does not exist on disk: %s. Purging stale index entry.", file_path)
-            print(f"[DOC OPEN] File path does not exist on disk: {file_path}. Purging stale index entry.")
-            try:
-                from agentic.file_context_search import cache
-                cache.delete_file(file_path)
-            except Exception as e:
-                logger.warning("[DOC OPEN] Failed to purge stale path: %s", e)
-
-            # ── INDEX VALIDATION & RETRY ────────────────────────────────────
-            fresh_results = []
-            last_q = getattr(session, "last_document_query", "")
-            if last_q:
-                from agentic.file_context_search.manager import DocumentSearchManager
-                fresh_results = DocumentSearchManager.find_documents(last_q, top_n=5)
-
-            if fresh_results:
-                session.pending_document_results = format_results_for_display(fresh_results)
-                new_top_path = fresh_results[0].path
-                if os.path.exists(new_top_path):
-                    logger.info("[DOC OPEN] Re-indexed and attempting to launch fresh result: %s", new_top_path)
-                    print(f"[DOC OPEN] Re-indexed and attempting to launch fresh result: {new_top_path}")
-                    opened = DocumentRetrievalManager.open_result(new_top_path)
-                    if opened:
-                        return ExecutionResult(
-                            success=True,
-                            output=f"The requested path was stale. I re-indexed and opened {fresh_results[0].filename}.",
-                            message=f"Opened {fresh_results[0].filename}.",
-                            tool="find_document_by_context",
-                            data={"opened": True, "path": new_top_path}
-                        )
-
+            logger.warning("[DOC OPEN] File path does not exist on disk: %s", file_path)
             return ExecutionResult(
                 success=False,
-                output=f"The file '{filename}' no longer exists on disk. I have updated the index.",
-                message=f"This file no longer exists.",
+                output=f"The file '{filename}' no longer exists on disk.",
+                message="File no longer exists.",
                 tool="find_document_by_context"
             )
 
-        # ── WINDOWS NATIVE OPEN ─────────────────────────────────────────────
-        logger.info("[DOC OPEN] Launching via os.startfile()")
-        print("[DOC OPEN] Launching via os.startfile()")
+        # ── PERMISSION LAYER CHECK ──────────────────────────────────────────
+        is_confirmed = (
+            args.get("confirmed") is True
+            or args.get("confirm") is True
+            or args.get("action") == "confirm_open"
+            or "confirm" in query_str.lower()
+        )
+
+        if not is_confirmed:
+            ext = os.path.splitext(file_path)[1].lstrip('.').upper() or "DOCUMENT"
+            try:
+                size_bytes = os.path.getsize(file_path)
+                if size_bytes < 1024:
+                    size_str = f"{size_bytes} Bytes"
+                elif size_bytes < 1024 * 1024:
+                    size_str = f"{size_bytes / 1024:.1f} KB"
+                else:
+                    size_str = f"{size_bytes / (1024 * 1024):.1f} MB"
+            except Exception:
+                size_str = "N/A"
+
+            msg = (
+                f"You are about to open:\n\n"
+                f"{filename}\n"
+                f"Location: {file_path}\n"
+                f"Type: {ext} | Size: {size_str}\n\n"
+                f"Do you want to continue?"
+            )
+            logger.info("[DOC OPEN PERMISSION] Requesting confirmation to open %s", filename)
+            print(f"[DOC OPEN PERMISSION] Requesting confirmation to open {filename}")
+
+            return ExecutionResult(
+                success=True,
+                output=msg,
+                message=msg,
+                tool="find_document_by_context",
+                requires_interaction=True,
+                data={
+                    "action": "open_permission_required",
+                    "result_number": result_num,
+                    "filename": filename,
+                    "path": file_path,
+                    "extension": ext,
+                    "size": size_str,
+                }
+            )
+
+        # ── WINDOWS NATIVE OPEN (EXECUTED ONLY AFTER CONFIRMATION) ───────────
+        logger.info("[DOC OPEN] Confirmed. Launching via os.startfile()")
+        print("[DOC OPEN] Confirmed. Launching via os.startfile()")
         try:
             opened = DocumentRetrievalManager.open_result(file_path)
             if opened:
@@ -156,18 +170,18 @@ def find_document_by_context(args: dict[str, Any]) -> ExecutionResult:
                 print(f"[DOC OPEN] Successfully opened file: {file_path}")
                 return ExecutionResult(
                     success=True,
-                    output=f"I have opened {filename}.",
-                    message=f"Opening {filename}.",
+                    output=f"{filename} opened successfully.",
+                    message=f"{filename} opened successfully.",
                     tool="find_document_by_context",
-                    data={"opened": True, "path": file_path}
+                    data={"opened": True, "path": file_path, "filename": filename}
                 )
             else:
-                logger.error("[DOC OPEN] Failed to launch file %s via os.startfile()", file_path)
-                print(f"[DOC OPEN] Failed to launch file {file_path} via os.startfile()")
+                logger.error("[DOC OPEN] Failed to launch file %s", file_path)
+                print(f"[DOC OPEN] Failed to launch file {file_path}")
                 return ExecutionResult(
                     success=False,
-                    output=f"Failed to open {filename}.",
-                    message=f"Failed to open {filename}.",
+                    output=f"Unable to open document.",
+                    message=f"Unable to open document.",
                     tool="find_document_by_context"
                 )
         except Exception as exc:
@@ -177,8 +191,8 @@ def find_document_by_context(args: dict[str, Any]) -> ExecutionResult:
             print(f"[DOC OPEN] Exception launching os.startfile() for path {file_path}: {exc}\n{tb_str}")
             return ExecutionResult(
                 success=False,
-                output=f"Exception opening {filename}: {exc}",
-                message=f"Exception opening {filename}: {exc}",
+                output=f"Unable to open document. {exc}",
+                message=f"Unable to open document. {exc}",
                 tool="find_document_by_context"
             )
 

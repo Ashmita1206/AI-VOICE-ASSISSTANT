@@ -326,3 +326,37 @@ def test_debug_index_api(monkeypatch, tmp_path):
     assert audit_res["folder"] == str(mm_dir)
     assert "BusinessPlan.pdf" in audit_res["files_found"]
     assert "README.pdf" in audit_res["files_found"]
+
+
+def test_document_open_permission_layer(monkeypatch, tmp_path):
+    """Verify Permission Layer before opening documents: confirmation required before launching file."""
+    from automation.document_retrieval_tool import find_document_by_context
+    from agentic.memory.session_state import get_session
+
+    session = get_session()
+    test_pdf = tmp_path / "HealthSphere_Architecture.pdf"
+    test_pdf.write_text("Dummy HealthSphere PDF content")
+
+    session.pending_document_results = [
+        {
+            "rank": 1,
+            "filename": "HealthSphere_Architecture.pdf",
+            "path": str(test_pdf),
+            "extension": "pdf",
+            "folder": "healthsphere"
+        }
+    ]
+
+    # Stage 1: Call find_document_by_context with result_number=1 WITHOUT confirmation
+    res_unconfirmed = find_document_by_context({"result_number": 1})
+    assert res_unconfirmed.success is True
+    assert res_unconfirmed.requires_interaction is True
+    assert res_unconfirmed.data["action"] == "open_permission_required"
+    assert res_unconfirmed.data["filename"] == "HealthSphere_Architecture.pdf"
+    assert "You are about to open:" in res_unconfirmed.output
+
+    # Stage 2: Call find_document_by_context with result_number=1 WITH confirmation
+    res_confirmed = find_document_by_context({"result_number": 1, "confirmed": True})
+    assert res_confirmed.success is True
+    assert res_confirmed.data.get("opened") is True
+    assert "opened successfully" in res_confirmed.output
