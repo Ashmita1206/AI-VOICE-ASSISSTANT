@@ -50,13 +50,18 @@ def run_e2e_test(query: str, test_name: str, test_open: bool = True):
                 stage = event.get("stage")
                 status = event.get("status")
                 
-                if stage == "done" and status == "requires_confirmation":
-                    conf_data = event.get("data", {}).get("confirmation", {})
-                    confirmation_id = conf_data.get("id")
-                    print(f"[SSE] Received confirmation request ID: {confirmation_id}")
-                
-                # Break on done event — stream is complete
-                if stage == "done":
+                if stage == "execution" and status in ("completed", "running"):
+                    steps = event.get("data", {}).get("steps", [])
+                    if steps:
+                        exec_steps = steps
+                elif stage == "done":
+                    exec_data = event.get("data", {}).get("execution", []) or event.get("data", {}).get("steps", [])
+                    if exec_data:
+                        exec_steps = exec_data
+                    if status == "requires_confirmation":
+                        conf_data = event.get("data", {}).get("confirmation", {})
+                        confirmation_id = conf_data.get("id")
+                        print(f"[SSE] Received confirmation request ID: {confirmation_id}")
                     break
 
             except Exception:
@@ -98,12 +103,12 @@ def run_e2e_test(query: str, test_name: str, test_open: bool = True):
 
     # Extract search results from execution steps
     for step in exec_steps:
-        if step.get("tool") == "find_document_by_context":
+        if step.get("tool") in ("find_document_by_context", "search_documents"):
             step_data = step.get("data") or {}
             if isinstance(step_data, dict) and "results" in step_data and step_data["results"]:
                 search_results = step_data["results"]
             else:
-                output = step.get("output")
+                output = step.get("output") or step.get("msg") or ""
                 if isinstance(output, str):
                     try:
                         parsed = json.loads(output)
@@ -113,6 +118,22 @@ def run_e2e_test(query: str, test_name: str, test_open: bool = True):
                         pass
                 elif isinstance(output, list):
                     search_results = output
+
+    if not search_results:
+        # Fallback: Check history endpoint for last tool output
+        try:
+            h_resp = requests.get(f"{BASE_URL}/history", timeout=5)
+            if h_resp.status_code == 200:
+                h_data = h_resp.json()
+                if isinstance(h_data, list) and h_data:
+                    last_sess = h_data[-1]
+                    for step in last_sess.get("execution_steps", []):
+                        if step.get("tool") in ("find_document_by_context", "search_documents"):
+                            s_data = step.get("data") or {}
+                            if "results" in s_data:
+                                search_results = s_data["results"]
+        except Exception:
+            pass
 
     print(f"\n--- {test_name} RETURNED RESULTS ({len(search_results)} files) ---")
     

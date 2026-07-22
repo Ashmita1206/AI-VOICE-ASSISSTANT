@@ -91,3 +91,15 @@ COLAB_TIMEOUT = int(os.getenv("COLAB_TIMEOUT", "120"))
 STT_USE_REMOTE  = os.getenv("STT_USE_REMOTE", "false").lower() == "true"
 STT_API_URL     = os.getenv("STT_API_URL", "https://common-sketch-cornmeal.ngrok-free.dev/transcribe")
 STT_API_TIMEOUT = int(os.getenv("STT_API_TIMEOUT", "60"))
+
+
+# ---------------------------------------------------------------------------
+# Remote RAG Embedding Retriever (Colab GPU) Configuration
+# ---------------------------------------------------------------------------
+# Set RAG_USE_REMOTE=true in your .env to route embedding generation to
+# the Colab-hosted GPU server instead of computing on local CPU.
+# ---------------------------------------------------------------------------
+RAG_USE_REMOTE  = os.getenv("RAG_USE_REMOTE", "true").lower() == "true"
+RAG_API_URL     = os.getenv("RAG_API_URL", "")
+RAG_API_TIMEOUT = int(os.getenv("RAG_API_TIMEOUT", "30"))
+
