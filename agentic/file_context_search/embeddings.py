@@ -30,13 +30,37 @@ MAX_EXTRACT_CHARS: int = 8000    # characters to read from each file
 MAX_EMBED_CHARS: int = 512       # chars fed to the embedding model
 
 
-# ── Lazy-loaded SentenceTransformer singleton ──────────────────────────────
+# ── Remote Embedding Client (Colab GPU) ────────────────────────────────────
+_remote_client = None
+
+
+def _get_remote_client():
+    """Return RemoteEmbeddingsClient if RAG_USE_REMOTE is true and URL is set."""
+    global _remote_client
+    try:
+        import config as global_config
+        use_remote = getattr(global_config, "RAG_USE_REMOTE", False)
+        rag_url = getattr(global_config, "RAG_API_URL", "") or os.getenv("RAG_API_URL", "")
+        if use_remote and rag_url:
+            if _remote_client is None:
+                from agentic.document_retrieval.remote_embeddings import RemoteEmbeddingsClient
+                _remote_client = RemoteEmbeddingsClient(api_url=rag_url)
+                logger.info("[EMBEDDINGS] Using Remote Embedding Server: %s", rag_url)
+            return _remote_client
+    except Exception as exc:
+        logger.warning("[EMBEDDINGS] Could not initialize remote client: %s", exc)
+    return None
+
+
+# ── Lazy-loaded SentenceTransformer singleton (local fallback) ─────────────
 _model = None
 _model_load_attempted: bool = False
 
 
 def _get_model():
-    """Return the SentenceTransformer model, loading it on first call."""
+    """Return the SentenceTransformer model, loading it on first call.
+
+    Only called when the remote embedding client is NOT available."""
     global _model, _model_load_attempted
     if _model is not None:
         return _model
@@ -259,12 +283,21 @@ def generate_embedding(text: str) -> Optional[bytes]:
         Raw bytes of the float32 numpy array, suitable for storing in SQLite
         as a BLOB.  Returns ``None`` if the model is unavailable.
     """
-    model = _get_model()
-    if model is None:
-        return None
-
     snippet = text[:MAX_EMBED_CHARS].strip()
     if not snippet:
+        return None
+
+    # Try remote embedding server first (Colab GPU)
+    remote = _get_remote_client()
+    if remote is not None:
+        vec = remote.generate_embedding(snippet)
+        if vec is not None:
+            return vec.astype(np.float32).tobytes()
+        logger.warning("[EMBEDDINGS] Remote embedding returned None, falling back to local...")
+
+    # Local fallback
+    model = _get_model()
+    if model is None:
         return None
 
     try:

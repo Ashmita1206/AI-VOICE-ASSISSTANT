@@ -77,20 +77,81 @@ class DocumentRetrievalManager:
 
     @classmethod
     def open_result(cls, path: str) -> bool:
-        """Open a file using native Windows default application."""
-        norm_path = os.path.normpath(path)
-        if not os.path.exists(norm_path):
-            logger.error(f"[RETRIEVAL] File does not exist: {norm_path}")
+        """Open a file using native Windows default application with detailed logging and multi-trigger execution."""
+        abs_path = os.path.abspath(path)
+        norm_path = os.path.normpath(abs_path)
+        exists = os.path.exists(norm_path)
+        ext = os.path.splitext(norm_path)[1]
+
+        print("=" * 60)
+        print(f"[DOC LAUNCH AUDIT] Absolute path: {norm_path}")
+        print(f"[DOC LAUNCH AUDIT] Exists: {exists}")
+        print(f"[DOC LAUNCH AUDIT] Extension: {ext}")
+        logger.info("[DOC LAUNCH AUDIT] Path=%s Exists=%s Ext=%s", norm_path, exists, ext)
+
+        if not exists:
+            logger.error("[DOC LAUNCH AUDIT] File does not exist: %s", norm_path)
+            print(f"[DOC LAUNCH AUDIT] Exception: FileNotFoundError - {norm_path} does not exist")
+            print("=" * 60)
             return False
-            
-        try:
-            if hasattr(os, "startfile"):
+
+        launched = False
+
+        # Method 1: os.startfile(norm_path)
+        if hasattr(os, "startfile"):
+            try:
+                print(f"[DOC LAUNCH AUDIT] Launching via: os.startfile('{norm_path}')")
                 os.startfile(norm_path)
-            else:
-                import subprocess
-                subprocess.Popen(f'start "" "{norm_path}"', shell=True)
-            logger.info(f"[RETRIEVAL] Opened document in native default application: {norm_path}")
-            return True
+                launched = True
+                print("[DOC LAUNCH AUDIT] os.startfile executed successfully.")
+                logger.info("[DOC LAUNCH AUDIT] os.startfile executed for: %s", norm_path)
+            except Exception as e:
+                import traceback
+                tb = traceback.format_exc()
+                print(f"[DOC LAUNCH AUDIT] Exception in os.startfile: {e}\n{tb}")
+                logger.warning("[DOC LAUNCH AUDIT] os.startfile exception: %s", e)
+
+        # Method 2: ShellExecuteW
+        try:
+            import ctypes
+            print(f"[DOC LAUNCH AUDIT] Launching via: ShellExecuteW('{norm_path}')")
+            ret = ctypes.windll.shell32.ShellExecuteW(None, "open", norm_path, None, None, 1)
+            print(f"[DOC LAUNCH AUDIT] ShellExecuteW return code: {ret}")
+            if ret > 32:
+                launched = True
         except Exception as e:
-            logger.error(f"[RETRIEVAL] Failed to open document {norm_path}: {e}")
-            return False
+            import traceback
+            tb = traceback.format_exc()
+            print(f"[DOC LAUNCH AUDIT] Exception in ShellExecuteW: {e}\n{tb}")
+            logger.warning("[DOC LAUNCH AUDIT] ShellExecuteW exception: %s", e)
+
+        # Method 3: subprocess cmd /c start "" "path"
+        try:
+            import subprocess
+            print(f'[DOC LAUNCH AUDIT] Launching via: subprocess cmd start "" "{norm_path}"')
+            subprocess.Popen(f'cmd /c start "" "{norm_path}"', shell=True)
+            launched = True
+            print("[DOC LAUNCH AUDIT] cmd start process spawned successfully.")
+            logger.info("[DOC LAUNCH AUDIT] cmd start spawned for: %s", norm_path)
+        except Exception as e:
+            import traceback
+            tb = traceback.format_exc()
+            print(f"[DOC LAUNCH AUDIT] Exception in cmd start: {e}\n{tb}")
+            logger.warning("[DOC LAUNCH AUDIT] cmd start exception: %s", e)
+
+        # Method 4: subprocess explorer.exe "path"
+        try:
+            import subprocess
+            print(f'[DOC LAUNCH AUDIT] Launching via: subprocess explorer.exe "{norm_path}"')
+            subprocess.Popen(["explorer.exe", norm_path])
+            launched = True
+            print("[DOC LAUNCH AUDIT] explorer.exe process spawned successfully.")
+            logger.info("[DOC LAUNCH AUDIT] explorer.exe spawned for: %s", norm_path)
+        except Exception as e:
+            import traceback
+            tb = traceback.format_exc()
+            print(f"[DOC LAUNCH AUDIT] Exception in explorer.exe: {e}\n{tb}")
+            logger.warning("[DOC LAUNCH AUDIT] explorer.exe exception: %s", e)
+
+        print("=" * 60)
+        return launched

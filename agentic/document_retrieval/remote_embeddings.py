@@ -43,15 +43,19 @@ class RemoteEmbeddingsClient:
         if not text:
             return None
 
+        logger.info("[REMOTE EMBEDDINGS] Using Remote Embedding Server")
+        t0 = time.perf_counter()
         try:
             resp = requests.post(
                 self.embed_url,
                 json={"text": text},
                 timeout=self.timeout
             )
+            t_latency = (time.perf_counter() - t0) * 1000
             if resp.status_code == 200:
                 data = resp.json()
                 if "embedding" in data:
+                    logger.info(f"[REMOTE EMBEDDINGS] POST /embed | Remote latency: {t_latency:.2f} ms | Embedding received")
                     return np.array(data["embedding"], dtype=np.float32)
             else:
                 logger.warning(f"[REMOTE EMBEDDINGS] Server returned HTTP {resp.status_code}: {resp.text[:200]}")
@@ -73,18 +77,22 @@ class RemoteEmbeddingsClient:
         if not valid_snippets:
             return results
 
+        logger.info("[REMOTE EMBEDDINGS] Using Remote Embedding Server for batch")
+        t0 = time.perf_counter()
         try:
             resp = requests.post(
                 self.embed_url,
                 json={"texts": valid_snippets},
                 timeout=self.timeout
             )
+            t_latency = (time.perf_counter() - t0) * 1000
             if resp.status_code == 200:
                 data = resp.json()
                 if "embeddings" in data:
                     embeddings_list = data["embeddings"]
                     for idx, vec in zip(valid_indices, embeddings_list):
                         results[idx] = np.array(vec, dtype=np.float32)
+                    logger.info(f"[REMOTE EMBEDDINGS] POST /embed | Remote latency: {t_latency:.2f} ms | Batch embeddings received ({len(valid_snippets)} items)")
                     return results
             else:
                 logger.warning(f"[REMOTE EMBEDDINGS] Batch server returned HTTP {resp.status_code}")

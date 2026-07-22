@@ -100,6 +100,6 @@ STT_API_TIMEOUT = int(os.getenv("STT_API_TIMEOUT", "60"))
 # the Colab-hosted GPU server instead of computing on local CPU.
 # ---------------------------------------------------------------------------
 RAG_USE_REMOTE  = os.getenv("RAG_USE_REMOTE", "true").lower() == "true"
-RAG_API_URL     = os.getenv("RAG_API_URL", "")
+RAG_API_URL     = os.getenv("RAG_API_URL", os.getenv("COLAB_API_URL", "https://evaluator-agreeing-plenty.ngrok-free.dev"))
 RAG_API_TIMEOUT = int(os.getenv("RAG_API_TIMEOUT", "30"))
 

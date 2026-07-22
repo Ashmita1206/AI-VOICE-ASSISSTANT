@@ -263,3 +263,25 @@ def permissions_mock():
     set_mock_permission(permission, granted)
     return jsonify({"success": True, "permission": permission, "granted": granted})
 
+
+@api.route("/view_document", methods=["GET"])
+def view_document():
+    """Serve a local document for viewing directly inside the web browser tab."""
+    raw_path = request.args.get("path", "")
+    if not raw_path:
+        return jsonify({"error": "Missing path parameter"}), 400
+
+    import urllib.parse
+    file_path = urllib.parse.unquote_plus(raw_path)
+    abs_path = os.path.abspath(file_path)
+
+    if not os.path.exists(abs_path):
+        logger.error("[VIEW DOC] File not found: %s (raw path: %s)", abs_path, raw_path)
+        return jsonify({"error": "File not found", "path": abs_path}), 404
+
+    from flask import send_file
+    import mimetypes
+    mime_type, _ = mimetypes.guess_type(abs_path)
+    return send_file(abs_path, mimetype=mime_type or "application/octet-stream", as_attachment=False)
+
+

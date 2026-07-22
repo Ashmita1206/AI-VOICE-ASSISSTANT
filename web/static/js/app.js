@@ -571,13 +571,17 @@ function handleSSEEvent(event) {
                     console.log("[FRONTEND] Found	find_document_by_context step");
                     console.log("[FRONTEND] Step data:", step.data);
                     console.log("[FRONTEND] Step output:", step.output);
+                    if (step.data && step.data.opened && step.data.path) {
+                        console.log("[FRONTEND] Document opened by backend. Opening in browser tab:", step.data.path);
+                        window.open(`/view_document?path=${encodeURIComponent(step.data.path)}`, '_blank');
+                    }
                     if (step.data && step.data.results && step.data.results.length > 0) {
                         results = step.data.results;
                         console.log("[FRONTEND] Results found in step.data.results:", results.length);
                     } else if (step.output && Array.isArray(step.output) && step.output.length > 0) {
                         results = step.output;
                         console.log("[FRONTEND] Results found in step.output:", results.length);
-                    } else if (step.output && typeof step.output === 'string') {
+                    } else if (step.output && typeof step.output === 'string' && step.output.trim().startsWith('[')) {
                         try {
                             const parsed = JSON.parse(step.output);
                             if (Array.isArray(parsed) && parsed.length > 0) {
@@ -585,7 +589,7 @@ function handleSSEEvent(event) {
                                 console.log("[FRONTEND] Results found in parsed step.output:", results.length);
                             }
                         } catch (e) {
-                            console.error('[FRONTEND] Failed to parse step.output:', e);
+                            // Non-JSON string output
                         }
                     }
                 }
@@ -1405,8 +1409,11 @@ function showFileSearchModal(results) {
     btn.style.fontSize = '0.85rem';
     btn.textContent = `Open number ${num}`;
     btn.onclick = () => {
-      console.log(`[MODAL] Button ${num} clicked, hiding modal and simulating command`);
+      console.log(`[MODAL] Button ${num} clicked, hiding modal, opening document in browser tab and simulating command`);
       modal.style.display = 'none';
+      if (res && res.path) {
+        window.open(`/view_document?path=${encodeURIComponent(res.path)}`, '_blank');
+      }
       simulateUserCommand(`Open number ${num}`);
     };
     actionsContainer.appendChild(btn);
@@ -1426,6 +1433,7 @@ function showFileSearchModal(results) {
   console.log("[MODAL] Added cancel button");
 
   console.log("[MODAL] Setting modal display to flex");
+  modal.classList.remove('hidden');
   modal.style.display = 'flex';
   console.log("[MODAL] Modal display style:", modal.style.display);
   console.log("[MODAL] Modal visibility:", modal.style.visibility);
