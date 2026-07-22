@@ -18,7 +18,6 @@ from typing import Generator, Tuple
 
 logger = logging.getLogger(__name__)
 
-# ── Supported file extensions ──────────────────────────────────────────────
 SUPPORTED_EXTENSIONS: frozenset[str] = frozenset({
     # Office documents
     "pdf", "doc", "docx", "odt", "rtf",
@@ -26,15 +25,12 @@ SUPPORTED_EXTENSIONS: frozenset[str] = frozenset({
     "ppt", "pptx", "odp",
     # Spreadsheets
     "xls", "xlsx", "ods", "csv",
-    # Plain text & markup
-    "txt", "md", "rst", "log",
-    # Data
-    "json", "xml", "yaml", "yml", "toml", "ini", "cfg",
-    # Web
-    "html", "htm",
-    # Source code
-    "py", "js", "ts", "java", "cpp", "c", "h", "cs", "go", "rb",
-    "php", "swift", "kt", "rs", "sh", "bat", "ps1",
+    # Text & Markup
+    "txt", "md",
+    # Data (inside project folders)
+    "json",
+    # Images
+    "jpeg", "jpg", "png", "webp", "gif", "bmp", "svg",
     # Notebooks
     "ipynb",
 })

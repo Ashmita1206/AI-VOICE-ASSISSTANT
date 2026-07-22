@@ -185,9 +185,13 @@ def apply_heuristic_fallback(transcription: str) -> PlannerOutput:
         )
 
     # Rule 6.5: Open selected search result
-    open_number_match = re.match(r"(?:open\s+)?(?:number|result)\s+(one|two|three|four|five|\d+)", text)
-    if open_number_match:
-        num_str = open_number_match.group(1).strip()
+    open_number_match = re.search(
+        r"(?:open\s+)?(?:the\s+)?(?:number|result|doc|document)?\s*(#|\b)(one|two|three|four|five|first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th|[1-5])\b(?:\s+(?:one|doc|document|file|result|item))?",
+        text,
+        re.IGNORECASE
+    )
+    if open_number_match and not any(kw in text.lower() for kw in ["healthsphere", "money", "mentor", "pdf", "docx", "pptx", "xlsx"]):
+        num_str = open_number_match.group(2).strip()
         return PlannerOutput(
             intent="open_selected_document",
             confidence=0.95,

@@ -677,7 +677,7 @@ function handleSSEEvent(event) {
         const requiresInteraction = executionSteps.some(step => step.requires_interaction);
         
         if (requiresInteraction) {
-          transitionTo(FSM_STATES.IDLE);
+          transitionTo('Awaiting Selection');
         } else if (taskSuccess) {
           transitionTo(FSM_STATES.COMPLETED);
           showCompletionPopup(data, true);
@@ -1442,4 +1442,41 @@ async function simulateUserCommand(text) {
   } catch(e) {
     console.error(e);
   }
+}
+
+// ============================================================================
+// File Search Modal Helper
+// ============================================================================
+
+function closeFileSearchModal() {
+  const modal = document.getElementById('file-search-modal');
+  if (modal) {
+    modal.style.display = 'none';
+    modal.classList.add('hidden');
+  }
+}
+
+// Ensure the helper is defined
+function sendTextCommand(text) {
+  statusText.textContent = '';
+  transitionTo(FSM_STATES.PROCESSING);
+
+  // Abort any previous stream
+  if (activeStreamController) activeStreamController.abort();
+  activeStreamController = new AbortController();
+
+  const formData = new FormData();
+  formData.append('text', text);
+
+  fetch('/transcribe_stream', {
+    method: 'POST',
+    body: formData,
+    signal: activeStreamController.signal,
+  }).then(res => {
+    if (res.ok) {
+       consumeSSEStream(res.body);
+    } else {
+       console.error("Text command failed", res.status);
+    }
+  }).catch(err => console.error(err));
 }

@@ -294,6 +294,102 @@ def run_pipeline_stream(audio_path: str | None = None, text: str | None = None) 
 
     yield _sse("planner", "completed", data=planner_output.to_dict())
 
+    # ── Step 5.9: Confirmation bypass for document search/open intents ────────
+    # Document search and open are safe, user-initiated actions that should
+    # execute immediately without requiring a "Proceed" confirmation click.
+    _DOCUMENT_BYPASS_INTENTS = {
+        "find_document_by_context",
+        "open_selected_document",
+    }
+    _DOCUMENT_BYPASS_TOOLS = {
+        "find_document_by_context",
+        "open_document_result",
+    }
+    _is_document_action = (
+        planner_output.intent in _DOCUMENT_BYPASS_INTENTS
+        or all(s.tool in _DOCUMENT_BYPASS_TOOLS for s in planner_output.steps)
+    )
+
+    if _is_document_action and len(planner_output.steps) > 0:
+        logger.info("[PIPELINE] Document intent detected — bypassing confirmation gate")
+
+        from execution.executor import DesktopExecutor
+        yield _sse("execution", "running", message="Searching and opening document…")
+
+        try:
+            _doc_executor = DesktopExecutor()
+            _doc_executor.bypass_confirmation = True
+
+            _doc_q: queue.Queue[str | None] = queue.Queue()
+            _doc_results_holder: list[list[dict]] = []
+            _doc_error_holder: list[Exception] = []
+
+            def _doc_run():
+                try:
+                    _doc_results_holder.append(
+                        _doc_executor.execute(plan, progress_callback=_doc_q.put)
+                    )
+                except Exception as _e:
+                    _doc_error_holder.append(_e)
+                finally:
+                    _doc_q.put(None)
+
+            _doc_thread = threading.Thread(target=_doc_run, daemon=True)
+            _doc_thread.start()
+
+            while True:
+                try:
+                    _msg = _doc_q.get(timeout=120)
+                except queue.Empty:
+                    break
+                if _msg is None:
+                    break
+                yield _sse("execution", "running", message=_msg)
+
+            _doc_thread.join(timeout=5)
+
+            if _doc_error_holder:
+                yield _sse("execution", "failed", message=str(_doc_error_holder[0]))
+                yield _sse("done", "error", data={"error": str(_doc_error_holder[0])})
+                return
+
+            _doc_exec_results = _doc_results_holder[0] if _doc_results_holder else []
+            yield _sse("execution", "completed", data={"steps": _doc_exec_results})
+
+            # Response generation
+            yield _sse("response", "processing", message="Generating assistant response…")
+            _doc_response_text = generate_response(_doc_exec_results)
+            _doc_audio_path = _generate_tts_file(_doc_response_text)
+            _doc_speech: dict[str, Any] = {"text": _doc_response_text}
+            if _doc_audio_path:
+                _doc_speech["audio_url"] = f"/static/audio/{os.path.basename(_doc_audio_path)}"
+            yield _sse("response", "completed", data=_doc_speech)
+
+            from agentic.memory.session_state import get_session as _doc_get_session
+            _doc_get_session().add_history(
+                transcript=transcription,
+                intent=planner_output.intent,
+                plan=planner_output.to_dict(),
+                result=_doc_response_text,
+            )
+            _doc_result = {
+                "transcription": transcription,
+                "stt": stt_metrics,
+                "intent": {"name": planner_output.intent, "confidence": round(planner_output.confidence * 100, 1)},
+                "entities": command.entities,
+                "planner": planner_output.to_dict(),
+                "execution": _doc_exec_results,
+                "speech": _doc_speech,
+                "pipeline_time_ms": int((time.perf_counter() - pipeline_start) * 1000),
+                "timestamp": datetime.now().isoformat(),
+            }
+            save_session(_doc_result)
+            yield _sse("done", "success", data=_doc_result)
+        except Exception as _doc_exc:
+            logger.exception("Document bypass execution failed")
+            yield _sse("done", "error", data={"error": str(_doc_exc)})
+        return
+
     # ── Step 6: Full Plan Confirmation ───────────────────────────────────────
     if len(planner_output.steps) == 0:
         # Proceed directly to response generation for conversational intents
@@ -475,9 +571,9 @@ def run_confirmation_stream(confirmation_id: str, edited_steps: list[dict] | Non
     
     while True:
         try:
-            msg = progress_queue.get(timeout=30)
+            msg = progress_queue.get(timeout=120)
         except queue.Empty:
-            logger.warning("Execution queue timed out after 30s")
+            logger.warning("Execution queue timed out after 120s")
             break
         if msg is None:
             break

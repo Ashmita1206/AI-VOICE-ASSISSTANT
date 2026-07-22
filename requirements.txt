@@ -52,6 +52,9 @@ python-docx>=1.1.0              # DOCX text extraction
 python-pptx>=0.6.23             # PPTX text extraction
 openpyxl>=3.1.0                 # XLSX/XLS text extraction
 rank-bm25>=0.2.2                # BM25 ranking (with TF fallback if unavailable)
+faiss-cpu>=1.7.0                # FAISS vector store for faster search
+watchdog>=4.0.0                 # Filesystem monitoring
+pandas>=2.0.0                   # CSV parsing
 
 # ==============================================================
 # Colab-side dependencies (colab_stt_server.ipynb installs these)
