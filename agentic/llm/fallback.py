@@ -16,6 +16,23 @@ def apply_heuristic_fallback(transcription: str) -> PlannerOutput:
     from agentic.memory.session_state import get_session
     session = get_session()
     
+    # Rule 0: File Explorer Context Search
+    find_verbs = r"(find|search|locate|look\s+for|open|where\s+is|need|show\s+me)"
+    doc_nouns = r"(file(?!\s*manager)|document|report|proposal|presentation|pdf|ppt|word|excel|spreadsheet|invoice|notes?(?!pad)|notebook(?!s)|deck)"
+    if re.search(find_verbs, text) and re.search(doc_nouns, text):
+        negative_words = r"\b(notepad|open\s+notes|create\s+file|edit\s+txt|write|type)\b"
+        if not re.search(negative_words, text):
+            query_text = text
+            query_text = re.sub(rf"^(?:can\s+you\s+)?{find_verbs}\s+(?:the\s+|my\s+|a\s+)?{doc_nouns}(?:s)?\s+(?:about\s+|on\s+|for\s+)?", "", query_text)
+            query_text = re.sub(rf"^(?:can\s+you\s+)?{find_verbs}\s+(?:the\s+|my\s+|a\s+)?", "", query_text)
+            
+            return PlannerOutput(
+                intent="find_document_by_context",
+                confidence=0.95,
+                reasoning="Matched explicit File Explorer Context Search pattern.",
+                steps=[PlannerStep(tool="find_document_by_context", args={"query": query_text.strip() or text})]
+            )
+
     # Rule 1: Get active window
     if text in ("get active window", "check active window", "what is the active window", "what app is open", "what app is active"):
         return PlannerOutput(
@@ -167,6 +184,33 @@ def apply_heuristic_fallback(transcription: str) -> PlannerOutput:
             ]
         )
 
+    # Rule 6.5: Open selected search result
+    open_number_match = re.search(
+        r"(?:open\s+)?(?:the\s+)?(?:number|result|doc|document)?\s*(#|\b)(one|two|three|four|five|first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th|[1-5])\b(?:\s+(?:one|doc|document|file|result|item))?",
+        text,
+        re.IGNORECASE
+    )
+    if open_number_match and not any(kw in text.lower() for kw in ["healthsphere", "money", "mentor", "pdf", "docx", "pptx", "xlsx"]):
+        num_str = open_number_match.group(2).strip()
+        is_confirmed = "confirm" in text or "approved" in text
+        return PlannerOutput(
+            intent="open_selected_document",
+            confidence=0.95,
+            reasoning=f"Matched open selected result: {num_str} (confirmed={is_confirmed})",
+            steps=[PlannerStep(tool="find_document_by_context", args={"result_number": num_str, "confirmed": is_confirmed})]
+        )
+
+    # Rule 6.6: Confirmed document opening command
+    if ("confirm" in text or "approved" in text) and any(w in text for w in ("open", "doc", "document", "file", "result")):
+        num_match = re.search(r"(\d+|one|two|three|four|five|1st|2nd|3rd|4th|5th)", text)
+        num_str = num_match.group(1) if num_match else "1"
+        return PlannerOutput(
+            intent="open_selected_document",
+            confidence=0.95,
+            reasoning=f"Matched confirmed document opening: {num_str}",
+            steps=[PlannerStep(tool="find_document_by_context", args={"result_number": num_str, "confirmed": True})]
+        )
+
     # Rule 7: Open/launch resource dynamically (e.g. "open chatgpt", "launch vs code")
     match = re.match(r"(?:open|launch|run|start|go\s+to)\s+(.+)", text)
     if match:
@@ -204,6 +248,143 @@ def apply_heuristic_fallback(transcription: str) -> PlannerOutput:
                     reasoning=f"Fallback matched '{query}' to file: {res.name}",
                     steps=[PlannerStep(tool="open_file", args={"path": res.path})]
                 )
+
+    # Rule 8: Notepad Automation (supports single and compound commands)
+    if "notepad" in text or any(word in text for word in ("write", "type", "append", "save file", "save notepad", "clear document", "clear notepad")):
+        segments = []
+        # Split by comma first
+        for seg in text.split(","):
+            # Further split by " and " / " then "
+            sub_segs = re.split(r"\band\b|\bthen\b", seg)
+            segments.extend(sub_segs)
+
+        steps = []
+        intent = "notepad_control"
+        
+        for s in segments:
+            s_clean = s.strip().lower()
+            if not s_clean:
+                continue
+                
+            # Match actions:
+            # 1. Open Notepad
+            if any(p in s_clean for p in ("open notepad", "launch notepad", "start notepad", "notepad open")):
+                steps.append(PlannerStep(tool="notepad_open", args={}))
+                
+            # 2. Save / Save As
+            elif any(p in s_clean for p in ("save as", "save file as", "save notepad as", "save document as", "save file", "save notepad", "save the file", "save document", "save it")):
+                fn_match = re.search(r"as\s+['\"]?([a-zA-Z0-9_\-\.]+)(?:\.txt)?['\"]?", s_clean)
+                filename = fn_match.group(1) if fn_match else None
+                if filename and not filename.endswith(".txt"):
+                    filename += ".txt"
+                
+                # Check for optional target directory (e.g. "on desktop", "in documents", "to downloads")
+                directory = None
+                for dir_name in ("desktop", "documents", "downloads", "pictures"):
+                    if dir_name in s_clean:
+                        directory = dir_name.capitalize()
+                        break
+                
+                # If directory not matched above, try regex match for general path strings
+                if not directory:
+                    dir_match = re.search(r"(?:in|into|on|to|onto)\s+['\"]?([a-zA-Z0-9_\-\.\:\\]+)['\"]?", s_clean)
+                    if dir_match:
+                        matched_dir = dir_match.group(1)
+                        if matched_dir != filename:
+                            directory = matched_dir
+                
+                # Check for overwrite flag
+                overwrite = "overwrite" in s_clean or "replace" in s_clean or "force" in s_clean
+                
+                args = {}
+                if filename:
+                    args["filename"] = filename
+                if directory:
+                    args["directory"] = directory
+                if overwrite:
+                    args["overwrite"] = True
+                    
+                steps.append(PlannerStep(tool="notepad_save", args=args))
+                
+            # 4. Close Notepad
+            elif any(p in s_clean for p in ("close notepad", "quit notepad", "exit notepad", "close it", "close the notepad", "close the file")) or s_clean == "close":
+                # Check if we should save before close
+                save_before = "save" in s_clean
+                # Check if we discard changes (default to true, false if "don't discard" or similar)
+                discard_changes = "discard" in s_clean or "dont save" in s_clean or "don't save" in s_clean or "discard changes" in s_clean
+                if "save" in s_clean and "without saving" in s_clean:
+                    discard_changes = True
+                
+                args = {}
+                if save_before:
+                    args["save_before_close"] = True
+                if "don't discard" in s_clean or "do not discard" in s_clean:
+                    args["discard_changes"] = False
+                elif discard_changes:
+                    args["discard_changes"] = True
+                    
+                steps.append(PlannerStep(tool="notepad_close", args=args))
+                
+            # 5. Type/Write/Append text
+            elif s_clean.startswith("write ") or s_clean.startswith("type ") or s_clean.startswith("append ") or "write in notepad" in s_clean or "type in notepad" in s_clean:
+                txt_match = re.search(r"(?:write|type|append)(?:\s+in\s+notepad)?\s+(?:text\s+)?['\"]?(.+?)['\"]?$", s_clean)
+                txt = txt_match.group(1) if txt_match else ""
+                if txt:
+                    txt_clean = re.sub(r"^['\"]|['\"]$", "", txt)
+                    # Strip trailing references to notepad from the typed text parameter itself
+                    txt_clean = re.sub(r"\s+(?:in|into|to)\s+notepad$", "", txt_clean, flags=re.IGNORECASE).strip()
+                    steps.append(PlannerStep(tool="notepad_type", args={"text": txt_clean}))
+                    
+            # 6. Press Enter / New Line
+            elif any(p in s_clean for p in ("press enter", "new line", "next line", "press return")):
+                steps.append(PlannerStep(tool="notepad_press_enter", args={}))
+                
+            # 7. Select All
+            elif any(p in s_clean for p in ("select all", "select all text")):
+                steps.append(PlannerStep(tool="notepad_select_all", args={}))
+                
+            # 8. Copy
+            elif s_clean == "copy" or "copy text" in s_clean or "copy in notepad" in s_clean:
+                steps.append(PlannerStep(tool="notepad_copy", args={}))
+                
+            # 9. Paste
+            elif s_clean == "paste" or "paste text" in s_clean or "paste in notepad" in s_clean:
+                steps.append(PlannerStep(tool="notepad_paste", args={}))
+                
+            # 10. Undo
+            elif s_clean == "undo" or "undo last action" in s_clean or "undo in notepad" in s_clean:
+                steps.append(PlannerStep(tool="notepad_undo", args={}))
+                
+            # 11. Redo
+            elif s_clean == "redo" or "redo in notepad" in s_clean:
+                steps.append(PlannerStep(tool="notepad_redo", args={}))
+                
+            # 12. Delete Text
+            elif any(p in s_clean for p in ("delete text", "delete all text", "delete in notepad")):
+                steps.append(PlannerStep(tool="notepad_delete", args={}))
+                
+            # 13. Clear Document
+            elif any(p in s_clean for p in ("clear notepad", "clear document", "clear all", "empty notepad")):
+                steps.append(PlannerStep(tool="notepad_clear", args={}))
+                
+            # 14. Open Existing File
+            elif "open file" in s_clean or "open" in s_clean and "in notepad" in s_clean:
+                path_match = re.search(r"(?:open file|open)\s+['\"]?([a-zA-Z0-9_\-\.\:\\]+)['\"]?", s_clean)
+                path = path_match.group(1) if path_match else ""
+                if path:
+                    steps.append(PlannerStep(tool="notepad_open_file", args={"path": path}))
+                    
+            # 15. New File
+            elif any(p in s_clean for p in ("new file", "new document", "create new file", "create a new file", "create a new text file", "new text file")):
+                steps.append(PlannerStep(tool="notepad_new_file", args={}))
+
+        if steps:
+            return PlannerOutput(
+                intent=intent,
+                confidence=0.95,
+                reasoning=f"Matched Notepad compound sequence flow for: '{text}'",
+                steps=steps
+            )
 
     # If no rules match, return standard safe fallback resolve_and_open
     return PlannerOutput.fallback("Could not parse offline plan.", query=transcription)

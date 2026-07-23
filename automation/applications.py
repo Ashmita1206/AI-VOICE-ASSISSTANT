@@ -815,6 +815,15 @@ def launch_application(args: dict[str, Any]) -> ExecutionResult:
             url = "https://chat.openai.com"
         elif "whatsapp" in search_query:
             url = "https://web.whatsapp.com"
+        # Reuse an existing matching browser tab if one is already open
+        from automation.browser import find_and_focus_browser_tab
+        if find_and_focus_browser_tab(url):
+            return ExecutionResult(
+                success=True,
+                tool="launch_application",
+                message=f"Could not launch '{app_name}' locally. Switched to existing browser tab: {url}",
+                metadata={"opened_in_browser": True, "reused_tab": True, "url": url}
+            )
         import webbrowser
         webbrowser.open_new_tab(url)
         return ExecutionResult(
@@ -1073,8 +1082,11 @@ def resolve_and_open(args: dict[str, Any]) -> ExecutionResult:
         print(f"[DISCOVERY] Found website match: {website_match.name}")
         print("[DISCOVERY] Opening website...")
         try:
-            import webbrowser
-            webbrowser.open_new_tab(website_match.url)
+            # Reuse an existing matching browser tab if one is already open
+            from automation.browser import find_and_focus_browser_tab
+            if not find_and_focus_browser_tab(website_match.url):
+                import webbrowser
+                webbrowser.open_new_tab(website_match.url)
         except Exception as e:
             logger.debug(f"Failed to open website fallback: {e}")
         return make_custom_result(
@@ -1097,8 +1109,11 @@ def resolve_and_open(args: dict[str, Any]) -> ExecutionResult:
         url = f"https://www.google.com/search?q={cleaned_query}"
         
     try:
-        import webbrowser
-        webbrowser.open_new_tab(url)
+        # Reuse an existing matching browser tab if one is already open
+        from automation.browser import find_and_focus_browser_tab
+        if not find_and_focus_browser_tab(url):
+            import webbrowser
+            webbrowser.open_new_tab(url)
     except Exception as e:
         logger.debug(f"Failed to open fallback URL: {e}")
         

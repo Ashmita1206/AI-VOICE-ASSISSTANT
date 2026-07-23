@@ -153,6 +153,27 @@
       </div>
     </div>
   </div>
+  <!-- File Search Modal -->
+  <div id="file-search-modal" class="modal-overlay hidden" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 1000; justify-content: center; align-items: center;">
+    <div class="modal-content" style="background: var(--bg-surface, #fff); border-radius: 12px; padding: 24px; width: 90%; max-width: 600px; box-shadow: 0 10px 30px rgba(0,0,0,0.3); max-height: 80vh; display: flex; flex-direction: column;">
+      <div style="font-size: 1.25rem; font-weight: 600; margin-bottom: 16px;">I found the following matching files:</div>
+      <div id="file-search-results" style="overflow-y: auto; flex: 1; margin-bottom: 24px; display: flex; flex-direction: column; gap: 12px;"></div>
+      <div style="border-top: 1px solid var(--border, #eee); padding-top: 16px; font-weight: 500; margin-bottom: 12px;">Speak or type:</div>
+      <div id="file-search-actions" style="display: flex; gap: 8px; flex-wrap: wrap;"></div>
+    </div>
+  </div>
+
+  <!-- Document Open Confirmation Modal (Permission Layer) -->
+  <div id="doc-confirm-modal" class="modal-overlay hidden" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 1001; justify-content: center; align-items: center;">
+    <div class="modal-content" style="background: var(--bg-surface, #fff); border-radius: 12px; padding: 24px; width: 90%; max-width: 480px; box-shadow: 0 10px 30px rgba(0,0,0,0.3); display: flex; flex-direction: column; gap: 16px;">
+      <div style="font-size: 1.2rem; font-weight: 600; color: var(--text-color, #111);">Permission Confirmation</div>
+      <div id="doc-confirm-message" style="font-size: 0.95rem; color: #444; line-height: 1.5;">Are you sure you want to open this document?</div>
+      <div style="display: flex; gap: 12px; justify-content: flex-end; margin-top: 8px;">
+        <button id="doc-confirm-cancel-btn" class="btn btn-cancel-action" style="padding: 8px 16px; font-size: 0.9rem;">Cancel</button>
+        <button id="doc-confirm-open-btn" class="btn btn-primary" style="padding: 8px 16px; font-size: 0.9rem;">Open</button>
+      </div>
+    </div>
+  </div>
 
   <script src="/static/js/app.js"></script>
 </body>

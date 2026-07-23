@@ -19,16 +19,16 @@ let activeStreamController = null;
 
 // ── FSM & Audio states ──────────────────────────────────────────────
 const FSM_STATES = {
-  IDLE:                     'Idle',
-  LISTENING:                'Listening',
-  TRANSCRIBING:             'Transcribing',
-  UNDERSTANDING:            'Understanding',
-  PLANNING:                 'Planning',
+  IDLE: 'Idle',
+  LISTENING: 'Listening',
+  TRANSCRIBING: 'Transcribing',
+  UNDERSTANDING: 'Understanding',
+  PLANNING: 'Planning',
   WAITING_FOR_CONFIRMATION: 'Awaiting Confirmation',
-  EXECUTING:                'Executing',
-  VERIFYING:                'Verifying',
-  COMPLETED:                'Completed',
-  FAILED:                   'Failed'
+  EXECUTING: 'Executing',
+  VERIFYING: 'Verifying',
+  COMPLETED: 'Completed',
+  FAILED: 'Failed'
 };
 
 let lastAudioBlob = null;
@@ -60,7 +60,7 @@ function unlockAudio() {
 
 function transitionTo(state) {
   const container = document.getElementById('fsm-status-container');
-  const badge     = document.getElementById('fsm-state-badge');
+  const badge = document.getElementById('fsm-state-badge');
   if (!container || badge === null) return;
 
   console.log(`[FSM] → ${state}`);
@@ -98,28 +98,28 @@ function transitionTo(state) {
 
 function validatePlanFrontend(confirmation) {
   const errors = [];
-  
+
   if (!confirmation) {
     errors.push("Confirmation object is missing.");
     return { valid: false, errors };
   }
-  
+
   if (!confirmation.plan) {
     errors.push("Execution plan is missing.");
     return { valid: false, errors };
   }
-  
+
   const steps = confirmation.plan.steps || [];
   if (steps.length === 0) {
     errors.push("Plan contains no executable steps.");
   }
-  
+
   steps.forEach((step, idx) => {
     if (!step.tool) {
       errors.push(`Step ${idx + 1} is missing a tool.`);
     }
   });
-  
+
   return {
     valid: errors.length === 0,
     errors
@@ -127,9 +127,9 @@ function validatePlanFrontend(confirmation) {
 }
 
 // ── DOM refs ─────────────────────────────────────────────────────────
-const micBtn      = document.getElementById('mic-btn');
+const micBtn = document.getElementById('mic-btn');
 const uploadInput = document.getElementById('upload-input');
-const statusText  = document.getElementById('status-text');
+const statusText = document.getElementById('status-text');
 
 const sections = [
   'sec-transcript',
@@ -219,7 +219,7 @@ function resetUI(keepMicStatus = false) {
 
   // Close any active confirmation card
   hideConfirmationCard();
-  
+
   // Close any active completion popup
   hideCompletionPopup();
 
@@ -312,7 +312,7 @@ function revealSection(id) {
 // ══════════════════════════════════════════════════════════════════════
 
 function showMicStatus(state, text) {
-  const el  = document.getElementById('mic-status');
+  const el = document.getElementById('mic-status');
   const txt = document.getElementById('mic-status-text');
   if (!el || !txt) return;
   el.className = `mic-status ${state}`;   // 'listening' or 'captured'
@@ -361,7 +361,7 @@ async function sendAudio(blob, filename) {
 }
 
 async function consumeSSEStream(body) {
-  const reader  = body.getReader();
+  const reader = body.getReader();
   const decoder = new TextDecoder('utf-8');
   let buffer = '';
 
@@ -392,8 +392,14 @@ async function consumeSSEStream(body) {
 // ══════════════════════════════════════════════════════════════════════
 
 function handleSSEEvent(event) {
-  console.log("[FRONTEND] Received JSON:", event);
+  console.log("================================================================================");
+  console.log("[FRONTEND] Received SSE Event");
+  console.log("[FRONTEND] Full event:", JSON.stringify(event, null, 2));
   const { stage, status, data, message } = event;
+  console.log("[FRONTEND] Stage:", stage);
+  console.log("[FRONTEND] Status:", status);
+  console.log("[FRONTEND] Message:", message);
+  console.log("[FRONTEND] Data:", data);
 
   switch (stage) {
 
@@ -420,11 +426,11 @@ function handleSSEEvent(event) {
         if (data && data.stt) {
           const s = data.stt;
           const modelEl = document.getElementById('met-model');
-          const confEl  = document.getElementById('met-conf');
-          const timeEl  = document.getElementById('met-time');
+          const confEl = document.getElementById('met-conf');
+          const timeEl = document.getElementById('met-time');
           if (modelEl) modelEl.textContent = s.model || '—';
-          if (confEl)  confEl.textContent  = s.confidence != null ? s.confidence + '%' : '—';
-          if (timeEl)  timeEl.textContent  = s.processing_time_ms != null ? s.processing_time_ms + ' ms' : '—';
+          if (confEl) confEl.textContent = s.confidence != null ? s.confidence + '%' : '—';
+          if (timeEl) timeEl.textContent = s.processing_time_ms != null ? s.processing_time_ms + ' ms' : '—';
         }
         revealSection('sec-transcript');
         revealSection('sec-accuracy');
@@ -527,16 +533,18 @@ function handleSSEEvent(event) {
 
     // ── Execution ───────────────────────────────────────────────────
     case 'execution': {
+      console.log("[FRONTEND] Execution case - status:", status);
       if (status === 'processing' || status === 'running') {
+        console.log("[FRONTEND] Execution processing/running");
         revealSection('sec-execution');
         setSectionState('sec-execution', 'processing');
         appendExecLogRow(message || '…', 'running');
         statusText.textContent = message || 'Executing…';
-        
+
         if (message && message.includes("Starting execution")) {
           console.log("Execution Started");
         }
-        
+
         if (message && message.includes("Verifying")) {
           transitionTo(FSM_STATES.VERIFYING);
         } else {
@@ -545,29 +553,88 @@ function handleSSEEvent(event) {
         console.log('Executing: ' + (message || '…'));
 
       } else if (status === 'completed') {
-        console.log('Execution finished');
+        console.log("[FRONTEND] Execution completed");
+        console.log("[FRONTEND] Execution data:", data);
+        console.log("[FRONTEND] Execution steps:", data?.steps);
         setSectionState('sec-execution', 'completed');
         finaliseExecLog(data?.steps);
-        // Show completion result row
-        appendExecLogRow('Execution Completed ✓', 'success');
-        statusText.textContent = 'Execution complete ✓';
-        // FSM transition and completion popup are driven by 'done' event at the end
 
-      } else if (status === 'requires_confirmation') {
-        setSectionState('sec-execution', 'completed');
-        appendExecLogRow(message || 'Awaiting confirmation…', 'confirm');
-        revealSection('sec-execution');
-        transitionTo(FSM_STATES.WAITING_FOR_CONFIRMATION);
+        // Check for file search results
+        console.log("[FRONTEND] Checking for file search results...");
+        if (data && data.steps) {
+          console.log("[FRONTEND] Steps found:", data.steps.length);
+          for (const step of data.steps) {
+            console.log("[FRONTEND] Checking step:", step);
+            console.log("[FRONTEND] Step tool:", step.tool);
+            let results = null;
+            if (step.tool === 'find_document_by_context') {
+              console.log("[FRONTEND] Found	find_document_by_context step");
+              console.log("[FRONTEND] Step data:", step.data);
+              console.log("[FRONTEND] Step output:", step.output);
+              if (step.data && step.data.opened && step.data.path) {
+                console.log("[FRONTEND] Document opened by backend. Opening in browser tab:", step.data.path);
+                window.open(`/view_document?path=${encodeURIComponent(step.data.path)}`, '_blank');
 
-      } else if (status === 'failed') {
-        console.log('Execution failed: ' + (message || ''));
-        setSectionState('sec-execution', 'failed');
-        appendExecLogRow('Execution Failed — ' + (message || 'Unknown error'), 'failure');
-        statusText.textContent = 'Execution failed.';
-        // FSM transition and completion popup are driven by 'done' event at the end
+                if (step.data && step.data.opened && step.data.path) {
+                  console.log("[FRONTEND] Document opened by backend:", step.data.path);
+>>>>>>> c75145e (Fix document opening behavior)
+                }
+                if (step.data && step.data.results && step.data.results.length > 0) {
+                  results = step.data.results;
+                  console.log("[FRONTEND] Results found in step.data.results:", results.length);
+                } else if (step.output && Array.isArray(step.output) && step.output.length > 0) {
+                  results = step.output;
+                  console.log("[FRONTEND] Results found in step.output:", results.length);
+                } else if (step.output && typeof step.output === 'string' && step.output.trim().startsWith('[')) {
+                  try {
+                    const parsed = JSON.parse(step.output);
+                    if (Array.isArray(parsed) && parsed.length > 0) {
+                      results = parsed;
+                      console.log("[FRONTEND] Results found in parsed step.output:", results.length);
+                    }
+                  } catch (e) {
+                    // Non-JSON string output
+                  }
+                }
+              }
+              if (results) {
+                console.log("[FRONTEND] Calling showFileSearchModal with results:", results);
+                console.log("[FRONTEND] showFileSearchModal type:", typeof showFileSearchModal);
+                if (typeof showFileSearchModal === 'function') {
+                  console.log("[FRONTEND] showFileSearchModal is a function, calling it...");
+                  showFileSearchModal(results);
+                  console.log("[FRONTEND] Returned from showFileSearchModal");
+                } else {
+                  console.error('[FRONTEND] showFileSearchModal is not a function!');
+                }
+              } else {
+                console.log("[FRONTEND] No results found in this step");
+              }
+            }
+          } else {
+            console.log("[FRONTEND] No steps data found");
+          }
+
+          // Show completion result row
+          appendExecLogRow('Execution Completed ✓', 'success');
+          statusText.textContent = 'Execution complete ✓';
+          // FSM transition and completion popup are driven by 'done' event at the end
+
+        } else if (status === 'requires_confirmation') {
+          setSectionState('sec-execution', 'completed');
+          appendExecLogRow(message || 'Awaiting confirmation…', 'confirm');
+          revealSection('sec-execution');
+          transitionTo(FSM_STATES.WAITING_FOR_CONFIRMATION);
+
+        } else if (status === 'failed') {
+          console.log('Execution failed: ' + (message || ''));
+          setSectionState('sec-execution', 'failed');
+          appendExecLogRow('Execution Failed — ' + (message || 'Unknown error'), 'failure');
+          statusText.textContent = 'Execution failed.';
+          // FSM transition and completion popup are driven by 'done' event at the end
+        }
+        break;
       }
-      break;
-    }
 
     // ── Response ────────────────────────────────────────────────────
     case 'response': {
@@ -581,8 +648,8 @@ function handleSSEEvent(event) {
         clearProcessingHint('sec-response');
         setSectionState('sec-response', 'completed');
         // Render response text and optional audio player
-        const respEl    = document.getElementById('response-text');
-        const audioEl   = document.getElementById('audio-player');
+        const respEl = document.getElementById('response-text');
+        const audioEl = document.getElementById('audio-player');
         if (respEl && data) {
           respEl.textContent = data.text || '';
         }
@@ -590,7 +657,7 @@ function handleSSEEvent(event) {
           audioEl.src = data.audio_url;
           audioEl.style.display = 'block';
           audioEl.load();
-          
+
           console.log("[AUDIO] Playing TTS response...");
           audioEl.play()
             .then(() => {
@@ -611,12 +678,15 @@ function handleSSEEvent(event) {
         clearMicStatus();
         statusText.textContent = 'Successfully executed all planned actions.';
         console.log("Execution Finished");
-        
+
         // Audit execution results to determine overall success/failure
         const executionSteps = data && data.execution ? data.execution : [];
         const taskSuccess = executionSteps.every(step => step.success !== false);
-        
-        if (taskSuccess) {
+        const requiresInteraction = executionSteps.some(step => step.requires_interaction);
+
+        if (requiresInteraction) {
+          transitionTo('Awaiting Selection');
+        } else if (taskSuccess) {
           transitionTo(FSM_STATES.COMPLETED);
           showCompletionPopup(data, true);
         } else {
@@ -668,7 +738,7 @@ function handleSSEEvent(event) {
       }
       break;
     }
-    
+
     default: {
       console.warn("Any missing event", stage, event);
       break;
@@ -743,13 +813,13 @@ function finaliseExecLog(steps) {
 
 function renderConfirmationCard(confirmation) {
   console.log("Showing confirmation");
-  const card       = document.getElementById('confirmation-card');
-  const messageEl  = document.getElementById('confirm-message');
-  const detailsEl  = document.getElementById('confirm-details');
+  const card = document.getElementById('confirmation-card');
+  const messageEl = document.getElementById('confirm-message');
+  const detailsEl = document.getElementById('confirm-details');
   const editTextarea = document.getElementById('confirm-edit-textarea');
   const proceedBtn = document.getElementById('btn-proceed');
-  const cancelBtn  = document.getElementById('btn-cancel');
-  const editBtn    = document.getElementById('btn-edit');
+  const cancelBtn = document.getElementById('btn-cancel');
+  const editBtn = document.getElementById('btn-edit');
 
   activeConfirmationId = confirmation.id;
 
@@ -779,8 +849,8 @@ function renderConfirmationCard(confirmation) {
 
   // Clone nodes to purge old listeners
   const newProceed = proceedBtn.cloneNode(true);
-  const newCancel  = cancelBtn.cloneNode(true);
-  const newEdit    = editBtn.cloneNode(true);
+  const newCancel = cancelBtn.cloneNode(true);
+  const newEdit = editBtn.cloneNode(true);
   proceedBtn.parentNode.replaceChild(newProceed, proceedBtn);
   cancelBtn.parentNode.replaceChild(newCancel, cancelBtn);
   editBtn.parentNode.replaceChild(newEdit, editBtn);
@@ -788,7 +858,7 @@ function renderConfirmationCard(confirmation) {
   if (!proceedEnabled) {
     // Show validation failure UI
     messageEl.innerHTML = `<span style="color: #dc2626;">❌ Unable to generate a valid execution plan.</span>`;
-    
+
     let errHtml = `<div class="confirm-error-reason" style="color: #dc2626; font-weight: bold; margin-bottom: 12px; font-size: 14px;">
       Reason:<br>
       <span style="font-weight: normal; color: var(--text);">${escapeHtml(validation.errors.join("<br>"))}</span>
@@ -830,7 +900,7 @@ function renderConfirmationCard(confirmation) {
   } else {
     // Proceed enabled UI: Ask for USER CONFIRMATION only
     messageEl.innerHTML = `<strong>Confirm Task Execution</strong>`;
-    
+
     if (!confirmation.task_description) {
       const match = (confirmation.message || "").match(/'([^']+)'/);
       confirmation.task_description = match ? match[1] : (confirmation.message || "Execute user request");
@@ -871,12 +941,12 @@ function renderConfirmationCard(confirmation) {
           currentSteps = JSON.parse(editTextarea.value);
           isEditing = false;
           editTextarea.style.display = 'none';
-          
+
           const updatedConfirmation = {
             ...confirmation,
             plan: { ...confirmation.plan, steps: currentSteps }
           };
-          
+
           // Re-validate edited steps
           const reValidation = validatePlanFrontend(updatedConfirmation);
           if (!reValidation.valid) {
@@ -925,13 +995,13 @@ function renderConfirmationCard(confirmation) {
 
 function buildConfirmDetails(confirmation) {
   let html = '';
-  
+
   if (confirmation.plan && confirmation.plan.steps) {
     const steps = confirmation.plan.steps;
     if (steps.length === 0) {
       return '<div style="color: #dc2626; font-weight: bold; padding: 12px; border: 1px solid #fecaca; background-color: #fef2f2; border-radius: 6px;">No executable actions generated.</div>';
     }
-    
+
     // 1. Task Description
     html += `<div class="confirm-section" style="margin-bottom: 12px;">
       <strong style="font-size: 13px; color: var(--text-muted);">Task:</strong>
@@ -942,13 +1012,13 @@ function buildConfirmDetails(confirmation) {
     html += `<div class="confirm-section" style="margin-bottom: 12px;">
       <strong style="font-size: 13px; color: var(--text-muted);">Execution Plan</strong>
       <ol style="margin-top: 6px; padding-left: 20px; list-style: decimal;">`;
-      
+
     steps.forEach((step, index) => {
       const tool = step.tool || 'unknown';
       const desc = step.description || `Run ${tool.replace(/_/g, ' ')}`;
       html += `<li style="margin-bottom: 4px; font-size: 13px;">${escapeHtml(desc)}</li>`;
     });
-    
+
     html += `</ol></div>`;
 
     // 3. Estimated Time
@@ -972,23 +1042,23 @@ function buildConfirmDetails(confirmation) {
         "This assistant will temporarily control your keyboard and mouse while executing the approved task."
       </div>
     </div>`;
-    
+
     console.log("[FRONTEND] Rendered Steps Count:", steps.length);
     return html;
   }
-  
+
   return '<div style="color: #dc2626; font-weight: bold; padding: 12px; border: 1px solid #fecaca; background-color: #fef2f2; border-radius: 6px;">No executable actions generated.</div>';
 }
 
 function getConfirmButtonLabel(tool) {
   const labels = {
     'send_whatsapp_message': 'Send Message',
-    'type_message':          'Send Message',
-    'delete_file':           'Delete',
-    'delete_folder':         'Delete',
-    'shutdown_system':       'Shutdown',
-    'reboot_system':         'Reboot',
-    'execute_shell':         'Execute',
+    'type_message': 'Send Message',
+    'delete_file': 'Delete',
+    'delete_folder': 'Delete',
+    'shutdown_system': 'Shutdown',
+    'reboot_system': 'Reboot',
+    'execute_shell': 'Execute',
   };
   return labels[tool] || 'Proceed';
 }
@@ -1012,18 +1082,18 @@ function hideConfirmationCard() {
 async function sendConfirmation(decision, editedSteps = null) {
   if (!activeConfirmationId) return;
 
-  const confirmId  = activeConfirmationId;
+  const confirmId = activeConfirmationId;
   activeConfirmationId = null;
   const proceedBtn = document.getElementById('btn-proceed');
-  const cancelBtn  = document.getElementById('btn-cancel');
-  const editBtn    = document.getElementById('btn-edit');
-  
+  const cancelBtn = document.getElementById('btn-cancel');
+  const editBtn = document.getElementById('btn-edit');
+
   proceedBtn.disabled = true;
-  cancelBtn.disabled  = true;
-  editBtn.disabled    = true;
+  cancelBtn.disabled = true;
+  editBtn.disabled = true;
   proceedBtn.style.opacity = '0.6';
-  cancelBtn.style.opacity  = '0.6';
-  editBtn.style.opacity    = '0.6';
+  cancelBtn.style.opacity = '0.6';
+  editBtn.style.opacity = '0.6';
 
   statusText.textContent = decision === 'proceed' ? 'Executing…' : 'Cancelling…';
 
@@ -1118,7 +1188,7 @@ function startConfirmationTimer(seconds) {
 
 async function checkPendingConfirmation() {
   try {
-    const res  = await fetch('/pending');
+    const res = await fetch('/pending');
     const data = await res.json();
     if (data.confirmation) {
       statusText.textContent = 'Pending confirmation restored.';
@@ -1190,9 +1260,9 @@ function showCompletionPopup(data, success) {
   }
 
   // Setup response text
-  const responseText = (data && data.speech && data.speech.text) || 
-                       (data && data.speech && typeof data.speech === 'string' ? data.speech : '') || 
-                       (success ? 'Task completed successfully.' : 'An error occurred during execution.');
+  const responseText = (data && data.speech && data.speech.text) ||
+    (data && data.speech && typeof data.speech === 'string' ? data.speech : '') ||
+    (success ? 'Task completed successfully.' : 'An error occurred during execution.');
   if (responseEl) responseEl.textContent = responseText;
 
   // Setup summary
@@ -1206,11 +1276,11 @@ function showCompletionPopup(data, success) {
         const stepName = document.createElement('span');
         stepName.className = 'completion-popup-step-name';
         stepName.textContent = step.tool || 'unknown';
-        
+
         const stepStatus = document.createElement('span');
         stepStatus.className = 'completion-popup-step-status ' + (step.success ? 'success' : 'failure');
         stepStatus.textContent = step.success ? '✓ Success' : '✗ Failed';
-        
+
         row.appendChild(stepName);
         row.appendChild(stepStatus);
         summaryEl.appendChild(row);
@@ -1291,3 +1361,137 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 });
 
+// File Search Modal logic
+function showFileSearchModal(results) {
+  console.log("================================================================================");
+  console.log("[MODAL] ENTER showFileSearchModal");
+  console.log("[MODAL] Results received:", results);
+  console.log("[MODAL] Results count:", results ? results.length : 0);
+
+  const modal = document.getElementById('file-search-modal');
+  const resultsContainer = document.getElementById('file-search-results');
+  const actionsContainer = document.getElementById('file-search-actions');
+
+  console.log("[MODAL] Modal element:", modal);
+  console.log("[MODAL] Results container:", resultsContainer);
+  console.log("[MODAL] Actions container:", actionsContainer);
+
+  if (!modal || !resultsContainer || !actionsContainer) {
+    console.error("[MODAL] Missing required elements:");
+    if (!modal) console.error("[MODAL] - modal is null");
+    if (!resultsContainer) console.error("[MODAL] - resultsContainer is null");
+    if (!actionsContainer) console.error("[MODAL] - actionsContainer is null");
+    return;
+  }
+
+  console.log("[MODAL] All elements found, clearing containers");
+  resultsContainer.innerHTML = '';
+  actionsContainer.innerHTML = '';
+
+  console.log("[MODAL] Processing results...");
+  results.forEach((res, index) => {
+    console.log(`[MODAL] Processing result ${index + 1}:`, res);
+    const num = index + 1;
+    const filename = res.filename || `Document ${num}`;
+    const div = document.createElement('div');
+    div.style.padding = '12px';
+    div.style.border = '1px solid var(--border, #eee)';
+    div.style.borderRadius = '8px';
+    div.style.background = '#fafafa';
+
+    div.innerHTML = `
+      <div class="doc-item-title" style="font-weight: 600; color: var(--primary, #007bff); cursor: pointer;">${num}. ${escapeHtml(filename)}</div>
+      <div style="font-size: 0.85rem; color: #555; margin-top: 4px;">Folder: ${escapeHtml(res.folder_path || res.folder || '')}</div>
+      <div style="font-size: 0.85rem; color: #555;">Modified: ${escapeHtml(res.modified_date || (res.modified_ts ? new Date(res.modified_ts * 1000).toDateString() : 'N/A'))}</div>
+      <div style="font-size: 0.85rem; color: #555;">Confidence: ${escapeHtml(res.confidence || (res.score ? Math.round(res.score * 100) + '%' : 'N/A'))}</div>
+    `;
+    const titleEl = div.querySelector('.doc-item-title');
+    if (titleEl) {
+      titleEl.onclick = () => showDocumentOpenConfirmation(num, filename);
+    }
+    resultsContainer.appendChild(div);
+    console.log(`[MODAL] Added result ${num} to container`);
+
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-primary';
+    btn.style.padding = '6px 12px';
+    btn.style.fontSize = '0.85rem';
+    btn.textContent = `Open number ${num}`;
+    btn.onclick = () => {
+      console.log(`[MODAL] Button ${num} clicked, hiding modal, opening document in browser tab and simulating command`);
+      modal.style.display = 'none';
+      simulateUserCommand(`Open number ${num}`);
+
+      console.log(`[MODAL] Button ${num} clicked. Triggering document open confirmation popup.`);
+      showDocumentOpenConfirmation(num, filename);
+
+    };
+    actionsContainer.appendChild(btn);
+    console.log(`[MODAL] Added button ${num} to actions`);
+  });
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'btn btn-cancel-action';
+  cancelBtn.style.padding = '6px 12px';
+  cancelBtn.style.fontSize = '0.85rem';
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.onclick = () => {
+    console.log("[MODAL] Cancel button clicked, hiding modal");
+    modal.style.display = 'none';
+  };
+  actionsContainer.appendChild(cancelBtn);
+  console.log("[MODAL] Added cancel button");
+
+  console.log("[MODAL] Setting modal display to flex");
+  modal.classList.remove('hidden');
+  modal.style.display = 'flex';
+  console.log("[MODAL] EXIT showFileSearchModal");
+}
+
+async function simulateUserCommand(text) {
+  try {
+    const formData = new FormData();
+    formData.append('text', text);
+    const res = await fetch('/transcribe_stream', { method: 'POST', body: formData });
+    if (res.ok) await consumeSSEStream(res.body);
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+// ============================================================================
+// File Search Modal Helper
+// ============================================================================
+
+function closeFileSearchModal() {
+  const modal = document.getElementById('file-search-modal');
+  if (modal) {
+    modal.style.display = 'none';
+    modal.classList.add('hidden');
+  }
+}
+
+// Ensure the helper is defined
+function sendTextCommand(text) {
+  statusText.textContent = '';
+  transitionTo(FSM_STATES.PROCESSING);
+
+  // Abort any previous stream
+  if (activeStreamController) activeStreamController.abort();
+  activeStreamController = new AbortController();
+
+  const formData = new FormData();
+  formData.append('text', text);
+
+  fetch('/transcribe_stream', {
+    method: 'POST',
+    body: formData,
+    signal: activeStreamController.signal,
+  }).then(res => {
+    if (res.ok) {
+      consumeSSEStream(res.body);
+    } else {
+      console.error("Text command failed", res.status);
+    }
+  }).catch(err => console.error(err));
+}

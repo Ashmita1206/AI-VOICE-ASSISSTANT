@@ -126,6 +126,11 @@ class DesktopExecutor:
 
             # ── Handle confirmation gate ────────────────────────────────
             if result.requires_confirmation:
+                print("=" * 80)
+                print("[EXECUTOR DEBUG] CONFIRMATION GATE TRIGGERED")
+                print(f"[EXECUTOR DEBUG] Tool: {step.tool}")
+                print(f"[EXECUTOR DEBUG] Message: {result.message}")
+                print(f"[EXECUTOR DEBUG] Confirmation ID will be generated")
                 _emit(f"🔒 Confirmation required: {result.message}")
                 remaining_steps = plan.steps[record.step_index:]
                 remaining_plan_dict = {
@@ -135,6 +140,7 @@ class DesktopExecutor:
                 from agentic.memory.pending_action import PendingActionManager
                 confirmation_id = PendingActionManager.save(remaining_plan_dict)
                 result.confirmation_id = confirmation_id
+                print(f"[EXECUTOR DEBUG] Confirmation ID: {confirmation_id}")
 
                 from agentic.memory.session_state import get_session
                 session = get_session()
@@ -142,7 +148,25 @@ class DesktopExecutor:
                     session.pending_action["id"] = confirmation_id
 
                 results.append(result.to_dict())
+                print("[EXECUTOR DEBUG] PAUSING EXECUTION FOR CONFIRMATION")
+                print(f"[EXECUTOR DEBUG] Results so far: {len(results)}")
                 break  # pause execution; resume after user confirms
+
+            # ── Handle interactive wait gate ──────────────────────────────
+            if result.requires_interaction:
+                print("=" * 80)
+                print("[EXECUTOR DEBUG] INTERACTION GATE TRIGGERED")
+                print(f"[EXECUTOR DEBUG] Tool: {step.tool}")
+                print(f"[EXECUTOR DEBUG] Message: {result.message}")
+                print(f"[EXECUTOR DEBUG] requires_interaction: {result.requires_interaction}")
+                print(f"[EXECUTOR DEBUG] Result data: {result.data}")
+                print(f"[EXECUTOR DEBUG] Result output: {result.output}")
+                _emit(f"⏸ Pending Interactive Action: {result.message}")
+                results.append(result.to_dict())
+                print(f"[EXECUTOR DEBUG] Result appended to results")
+                print(f"[EXECUTOR DEBUG] Total results: {len(results)}")
+                print("[EXECUTOR DEBUG] PAUSING EXECUTION FOR USER INTERACTION")
+                break  # pause execution; wait for follow-up user command
 
             # ── Emit outcome message ────────────────────────────────────
             if record.status == StepStatus.SUCCESS:
@@ -184,7 +208,10 @@ class DesktopExecutor:
         -------
         ExecutionResult
         """
+        print("=" * 80)
+        print("[EXECUTOR] ENTER execute_step")
         print(f"[EXECUTOR] Received tool: {step.tool}")
+        print(f"[EXECUTOR] Arguments: {step.args}")
 
         def _cb(msg: str) -> None:
             if progress_callback:
@@ -206,6 +233,7 @@ class DesktopExecutor:
             confirmation_id = get_session().set_pending_action(step.tool, step.args, message)
 
             print("[EXECUTOR] Result: requires_confirmation")
+            print(f"[EXECUTOR] Confirmation ID: {confirmation_id}")
             return ExecutionResult(
                 success=False,
                 tool=step.tool,
@@ -217,7 +245,7 @@ class DesktopExecutor:
 
         # 2. Registry lookup
         if not tool_found:
-            print("[EXECUTOR] Result: failure")
+            print("[EXECUTOR] Result: failure (tool not found)")
             return ExecutionResult(
                 success=False,
                 tool=step.tool,
@@ -227,19 +255,29 @@ class DesktopExecutor:
 
         # 3. Execute
         try:
+            logger.info("[PIPELINE][DISPATCH] Calling handler: tool=%s  args=%s", step.tool, step.args)
+            print(f"[EXECUTOR] Calling handler for {step.tool}")
             with ExecutionTimer() as timer:
                 result = handler(step.args)
             if not result.tool:
                 result.tool = step.tool
             result.execution_time_ms = timer.elapsed_ms
             result_str = "success" if result.success else "failure"
-            print(f"[EXECUTOR] Result: {result_str}")
+            logger.info("[PIPELINE][DISPATCH] Result: tool=%s  status=%s  elapsed_ms=%d  msg=%r",
+                        step.tool, result_str, timer.elapsed_ms, result.message)
+            print(f"[EXECUTOR] Handler returned: success={result.success}")
+            print(f"[EXECUTOR] requires_interaction: {getattr(result, 'requires_interaction', None)}")
+            print(f"[EXECUTOR] requires_confirmation: {getattr(result, 'requires_confirmation', None)}")
+            print(f"[EXECUTOR] Result data: {getattr(result, 'data', None)}")
+            print(f"[EXECUTOR] Result output: {getattr(result, 'output', None)}")
             if result.message:
                 _cb(result.message)
+            print(f"[EXECUTOR] Returning result from execute_step")
             return result
         except Exception as exc:
             logger.exception(f"Unhandled exception in handler for {step.tool}")
-            print("[EXECUTOR] Result: failure")
+            print(f"[EXECUTOR] Exception in handler: {exc}")
+            print("[EXECUTOR] Result: failure (exception)")
             _cb(f"Handler error: {exc}")
             return ExecutionResult(
                 success=False,

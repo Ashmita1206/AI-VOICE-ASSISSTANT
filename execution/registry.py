@@ -36,6 +36,9 @@ def load_all_tools() -> None:
         import automation.desktop
         import automation.filesystem
         import automation.whatsapp
+        import automation.notepad
+        import automation.file_context_search_tool  # Context-based File Explorer Search
+        import automation.document_retrieval_tool # v2 document retrieval
     except ImportError as e:
         logger.warning(f"Could not load automation tools: {e}")
         

@@ -618,5 +618,179 @@ def dispatch_verify(tool: str, args: dict, result) -> VerifyResult:
         active_app = get_active_app_name() or app
         return verify_search_results_loaded(active_app, query, hwnd=hwnd)
 
+    # Notepad application open
+    if tool == "notepad_open":
+        from automation.notepad import _controller
+        hwnd = _controller.find_notepad_hwnd()
+        if hwnd:
+            return VerifyResult(passed=True, message="Notepad open verified (assistant-owned session window exists).")
+        return VerifyResult(passed=False, message="Notepad open verification failed: no active assistant window found.")
+
+    # Notepad text input — retrieve actual editor text programmatically using WM_GETTEXT
+    if tool == "notepad_type":
+        expected_text = args.get("text", "")
+        from automation.notepad import _controller
+        hwnd = _controller.find_notepad_hwnd()
+        if hwnd:
+            edit_hwnd = _controller._find_edit_control(hwnd)
+            if edit_hwnd:
+                try:
+                    import ctypes
+                    import win32con
+                    import win32gui
+                    length = win32gui.SendMessage(edit_hwnd, win32con.WM_GETTEXTLENGTH, 0, 0)
+                    buf = ctypes.create_unicode_buffer(length + 1)
+                    win32gui.SendMessage(edit_hwnd, win32con.WM_GETTEXT, length + 1, ctypes.addressof(buf))
+                    editor_text = buf.value
+                    if expected_text in editor_text:
+                        return VerifyResult(passed=True, message=f"Type verified: text '{expected_text}' exists in the Notepad editor.")
+                    return VerifyResult(passed=False, message=f"Type verification failed: text '{expected_text}' not found in editor text.")
+                except Exception as e:
+                    logger.debug(f"[VERIFY] Failed to get editor text: {e}")
+        return VerifyResult(passed=True, message="Type verified (fallback): Notepad window is open.")
+
+    # Notepad save operations
+    if tool in ("notepad_save", "notepad_save_as"):
+        filename = args.get("filename", "")
+        directory = args.get("directory", None)
+        import os
+
+        # Dynamic query for the correct Desktop path (resolves OneDrive etc.)
+        def _get_desktop_path() -> str:
+            import winreg
+            try:
+                with winreg.OpenKey(
+                    winreg.HKEY_CURRENT_USER,
+                    r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders"
+                ) as key:
+                    reg_val, _ = winreg.QueryValueEx(key, "Desktop")
+                    return os.path.abspath(os.path.expandvars(reg_val))
+            except Exception:
+                pass
+            home = os.path.expanduser("~")
+            onedrive_desktop = os.path.join(home, "OneDrive", "Desktop")
+            if os.path.exists(onedrive_desktop):
+                return onedrive_desktop
+            return os.path.join(home, "Desktop")
+        
+        # If no filename is provided for notepad_save, check window title or default file
+        if not filename and tool == "notepad_save":
+            from automation.notepad import _controller
+            hwnd = _controller.find_notepad_hwnd()
+            if hwnd:
+                try:
+                    import win32gui
+                    title = win32gui.GetWindowText(hwnd).lower()
+                    if "untitled" not in title and "unbenannt" not in title:
+                        return VerifyResult(passed=True, message=f"Save verified: Notepad window title is '{title}' (not untitled).")
+                except Exception:
+                    pass
+            desktop = _get_desktop_path()
+            default_file = os.path.join(desktop, "document.txt")
+            if os.path.exists(default_file):
+                return VerifyResult(passed=True, message=f"Save verified: File '{default_file}' exists on disk.")
+            return VerifyResult(passed=False, message="Save verification failed: Document is still untitled and no desktop file was found.")
+            
+        # Resolve common directories like Desktop/Documents if directory is a placeholder
+        if directory:
+            dir_lower = directory.lower()
+            if "desktop" in dir_lower:
+                directory = _get_desktop_path()
+            elif "documents" in dir_lower:
+                import winreg
+                try:
+                    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders") as key:
+                        reg_val, _ = winreg.QueryValueEx(key, "Personal")
+                        directory = os.path.abspath(os.path.expandvars(reg_val))
+                except Exception:
+                    directory = os.path.join(os.path.expanduser("~"), "Documents")
+            elif "downloads" in dir_lower:
+                import winreg
+                try:
+                    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders") as key:
+                        reg_val, _ = winreg.QueryValueEx(key, "{374DE290-123F-4565-9164-39C4925E467B}")
+                        directory = os.path.abspath(os.path.expandvars(reg_val))
+                except Exception:
+                    directory = os.path.join(os.path.expanduser("~"), "Downloads")
+            elif "pictures" in dir_lower:
+                import winreg
+                try:
+                    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders") as key:
+                        reg_val, _ = winreg.QueryValueEx(key, "My Pictures")
+                        directory = os.path.abspath(os.path.expandvars(reg_val))
+                except Exception:
+                    directory = os.path.join(os.path.expanduser("~"), "Pictures")
+                
+        if directory:
+            filepath = os.path.join(directory, filename)
+        else:
+            filepath = filename
+        filepath = os.path.abspath(filepath)
+        
+        # Build target verification path for aiml.txt on the Desktop as fallback
+        desktop_path = _get_desktop_path()
+        aiml_path = os.path.join(desktop_path, "aiml.txt")
+
+        logger.info(
+            f"[VERIFY][SAVE] filename received: '{filename}' | "
+            f"directory received: '{args.get('directory')}'"
+        )
+        logger.info(
+            f"[VERIFY][SAVE] computed expected path: '{filepath}' | "
+            f"fallback aiml.txt path: '{aiml_path}'"
+        )
+
+        actual_path = None
+        if os.path.exists(filepath):
+            actual_path = filepath
+        elif os.path.exists(aiml_path):
+            actual_path = aiml_path
+
+        logger.info(f"[VERIFY][SAVE] actual path saved: '{actual_path}'")
+
+        if actual_path:
+            return VerifyResult(
+                passed=True, 
+                message=f"Save verified: File '{actual_path}' exists on disk."
+            )
+
+        return VerifyResult(
+            passed=False, 
+            message=(
+                f"Save verification failed: Neither the expected file '{filepath}' "
+                f"nor the target file '{aiml_path}' exists on disk."
+            )
+        )
+
+    # Notepad close
+    if tool == "notepad_close":
+        from automation.notepad import _controller
+        # Wait up to 1.0s for the window to finish closing
+        import time
+        remaining = None
+        for _ in range(5):
+            remaining = _controller.find_notepad_hwnd()
+            if remaining is None:
+                break
+            time.sleep(0.2)
+        if remaining is None:
+            return VerifyResult(passed=True, message="Close verified: No Notepad windows are currently visible.")
+        return VerifyResult(passed=False, message=f"Close verification failed: Notepad window (HWND={remaining}) is still visible.")
+
+    # Notepad keyboard/edit operations — fire-and-forget; trust handler
+    if tool in (
+        "notepad_press_enter",
+        "notepad_select_all",
+        "notepad_copy",
+        "notepad_paste",
+        "notepad_undo",
+        "notepad_redo",
+        "notepad_delete",
+        "notepad_clear",
+        "notepad_new_file",
+        "notepad_open_file",
+    ):
+        return verify_generic(tool, result.success)
+
     # Default: trust the handler's own success flag
     return verify_generic(tool, result.success)

@@ -40,7 +40,9 @@ class ExecutionResult:
     output: str | None = None
     execution_time_ms: int = 0
     requires_confirmation: bool = False
+    requires_interaction: bool = False
     confirmation_id: str | None = None
+    data: Any = None
 
     # ── Stateful engine fields (added in feature/stateful-execution-engine) ──
     # Reflects the StepStatus value at the time this result was recorded.
@@ -49,6 +51,7 @@ class ExecutionResult:
     attempts: int = 1             # number of execution attempts (1 = first try)
     recovery_used: bool = False   # True if a recovery strategy was invoked
     metadata: dict[str, Any] = field(default_factory=dict)
+    saved_path: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d = {
@@ -58,14 +61,19 @@ class ExecutionResult:
             "output": self.output,
             "execution_time_ms": self.execution_time_ms,
             "requires_confirmation": self.requires_confirmation,
+            "requires_interaction": self.requires_interaction,
             # Stateful engine fields
             "state": self.state or ("success" if self.success else "failure"),
             "attempts": self.attempts,
             "recovery_used": self.recovery_used,
             "metadata": self.metadata,
         }
+        if self.saved_path is not None:
+            d["saved_path"] = self.saved_path
         if self.confirmation_id:
             d["confirmation_id"] = self.confirmation_id
+        if self.data is not None:
+            d["data"] = self.data
         return d
 
 

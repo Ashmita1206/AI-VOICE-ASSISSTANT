@@ -77,4 +77,5 @@ def create_app() -> Flask:
 
 if __name__ == "__main__":
     app = create_app()
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    # Disable auto-reloader so PyTorch/torch_dynamo background file touches do not restart Flask mid-request
+    app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)

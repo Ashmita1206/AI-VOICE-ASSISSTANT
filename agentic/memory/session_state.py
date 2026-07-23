@@ -36,6 +36,8 @@ class SessionState:
         self.task_started_at: Optional[float] = None
         self.interrupted_task: Optional[Dict[str, Any]] = None
         self.conversation_history: List[Dict[str, Any]] = []
+        # Context-based document search: stores last search results for follow-up selection
+        self.pending_document_results: List[Dict[str, Any]] = []
 
     def set_pending_action(self, tool: str, args: Dict[str, Any], message: str) -> str:
         """Set an action that requires user confirmation.

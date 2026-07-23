@@ -56,9 +56,29 @@ def transcribe():
 
 @api.route("/transcribe_stream", methods=["POST"])
 def transcribe_stream():
-    """Receive audio and stream pipeline progress as Server-Sent Events."""
+    """Receive audio or text and stream pipeline progress as Server-Sent Events."""
+    text_input = request.form.get("text")
+    if text_input:
+        def generate_text_stream():
+            try:
+                yield from run_pipeline_stream(text=text_input)
+            except Exception as exc:
+                logger.exception("Streaming pipeline error (text)")
+                import json
+                yield f'data: {{"stage":"done","status":"error","message":{json.dumps(str(exc))}}}\n\n'
+                
+        return Response(
+            stream_with_context(generate_text_stream()),
+            mimetype="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                "Connection": "keep-alive",
+            },
+        )
+
     if "audio" not in request.files:
-        return jsonify({"error": "No audio file provided."}), 400
+        return jsonify({"error": "No audio or text provided."}), 400
 
     audio_file = request.files["audio"]
 
@@ -78,7 +98,7 @@ def transcribe_stream():
 
     def generate_and_cleanup():
         try:
-            yield from run_pipeline_stream(temp_path)
+            yield from run_pipeline_stream(audio_path=temp_path)
         except Exception as exc:
             logger.exception("Streaming pipeline error")
             import json
@@ -242,4 +262,26 @@ def permissions_mock():
     from agentic.permissions_check import set_mock_permission
     set_mock_permission(permission, granted)
     return jsonify({"success": True, "permission": permission, "granted": granted})
+
+
+@api.route("/view_document", methods=["GET"])
+def view_document():
+    """Serve a local document for viewing directly inside the web browser tab."""
+    raw_path = request.args.get("path", "")
+    if not raw_path:
+        return jsonify({"error": "Missing path parameter"}), 400
+
+    import urllib.parse
+    file_path = urllib.parse.unquote_plus(raw_path)
+    abs_path = os.path.abspath(file_path)
+
+    if not os.path.exists(abs_path):
+        logger.error("[VIEW DOC] File not found: %s (raw path: %s)", abs_path, raw_path)
+        return jsonify({"error": "File not found", "path": abs_path}), 404
+
+    from flask import send_file
+    import mimetypes
+    mime_type, _ = mimetypes.guess_type(abs_path)
+    return send_file(abs_path, mimetype=mime_type or "application/octet-stream", as_attachment=False)
+
 

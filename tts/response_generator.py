@@ -94,10 +94,19 @@ def generate_response(execution_results: list[dict[str, Any]]) -> str:
         elif tool == "system_info":
             phrases.append("I have retrieved the system information.")
             
+        elif tool == "find_document_by_context":
+            if output and isinstance(output, str):
+                phrases.append(output)
+            else:
+                phrases.append("I have searched for the requested document.")
+                
         else:
             # Generic success
-            tool_friendly = tool.replace("_", " ")
-            phrases.append(f"Completed {tool_friendly}.")
+            if output and isinstance(output, str) and not output.startswith("{"):
+                phrases.append(output)
+            else:
+                tool_friendly = tool.replace("_", " ")
+                phrases.append(f"Completed {tool_friendly}.")
             
     # Combine phrases elegantly. If multiple actions, join with "and"
     if len(phrases) == 1:
