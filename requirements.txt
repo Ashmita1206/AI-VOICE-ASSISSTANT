@@ -56,6 +56,11 @@ faiss-cpu>=1.7.0                # FAISS vector store for faster search
 watchdog>=4.0.0                 # Filesystem monitoring
 pandas>=2.0.0                   # CSV parsing
 
+# LangGraph & LangChain Orchestration & Automation
+langchain>=0.3.0
+langchain-core>=0.3.0
+langgraph>=0.2.0
+
 # ==============================================================
 # Colab-side dependencies (colab_stt_server.ipynb installs these)
 # ==============================================================
