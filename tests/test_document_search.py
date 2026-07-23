@@ -478,7 +478,10 @@ class TestFindDocumentTool:
 
         assert result.success is True
         assert result.output is not None
-        parsed = json.loads(result.output)
+        if result.data and "results" in result.data:
+            parsed = result.data["results"]
+        else:
+            parsed = json.loads(result.output)
         assert len(parsed) == 1
         assert parsed[0]["filename"] == "proposal.docx"
 
@@ -543,7 +546,6 @@ class TestOpenDocumentResult:
         """Verify that string numbers like '2' are parsed correctly."""
         from automation.document_search_tool import open_document_result
         from agentic.memory.session_state import get_session
-        from execution.schemas import ExecutionResult
 
         session = get_session()
         session.pending_document_results = [
@@ -551,9 +553,9 @@ class TestOpenDocumentResult:
             {"rank": 2, "path": "/docs/b.pdf", "filename": "b.pdf"},
         ]
 
-        mock_result = ExecutionResult(success=True, tool="open_file", message="Opened.")
-        with patch("automation.filesystem.open_file", return_value=mock_result):
-            result = open_document_result({"result_number": "1"})
+        with patch("os.path.exists", return_value=True):
+            with patch("agentic.document_retrieval.manager.DocumentRetrievalManager.open_result", return_value=True):
+                result = open_document_result({"result_number": "1"})
 
         assert result.success is True
 
