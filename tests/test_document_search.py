@@ -540,7 +540,7 @@ class TestOpenDocumentResult:
                 result = open_document_result({"result_number": 2, "confirmed": True})
 
         assert result.success is True
-        mock_open.assert_called_once_with("/docs/proposal.docx")
+        mock_open.assert_called_once_with(os.path.abspath("/docs/proposal.docx"))
 
     def test_ordinal_word_mapping(self):
         """Verify that string numbers like '2' are parsed correctly."""
