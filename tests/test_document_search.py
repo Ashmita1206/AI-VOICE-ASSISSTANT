@@ -537,7 +537,7 @@ class TestOpenDocumentResult:
 
         with patch("os.path.exists", return_value=True):
             with patch("agentic.document_retrieval.manager.DocumentRetrievalManager.open_result", return_value=True) as mock_open:
-                result = open_document_result({"result_number": 2})
+                result = open_document_result({"result_number": 2, "confirmed": True})
 
         assert result.success is True
         mock_open.assert_called_once_with("/docs/proposal.docx")
