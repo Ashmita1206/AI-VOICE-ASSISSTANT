@@ -568,35 +568,31 @@ function handleSSEEvent(event) {
             console.log("[FRONTEND] Step tool:", step.tool);
             let results = null;
             if (step.tool === 'find_document_by_context') {
-              console.log("[FRONTEND] Found	find_document_by_context step");
+              console.log("[FRONTEND] Found find_document_by_context step");
               console.log("[FRONTEND] Step data:", step.data);
               console.log("[FRONTEND] Step output:", step.output);
               if (step.data && step.data.opened && step.data.path) {
-                console.log("[FRONTEND] Document opened by backend. Opening in browser tab:", step.data.path);
-                window.open(`/view_document?path=${encodeURIComponent(step.data.path)}`, '_blank');
+                console.log("[FRONTEND] Document opened successfully by backend:", step.data.path);
+              }
 
-                if (step.data && step.data.opened && step.data.path) {
-                  console.log("[FRONTEND] Document opened by backend:", step.data.path);
->>>>>>> c75145e (Fix document opening behavior)
-                }
-                if (step.data && step.data.results && step.data.results.length > 0) {
-                  results = step.data.results;
-                  console.log("[FRONTEND] Results found in step.data.results:", results.length);
-                } else if (step.output && Array.isArray(step.output) && step.output.length > 0) {
-                  results = step.output;
-                  console.log("[FRONTEND] Results found in step.output:", results.length);
-                } else if (step.output && typeof step.output === 'string' && step.output.trim().startsWith('[')) {
-                  try {
-                    const parsed = JSON.parse(step.output);
-                    if (Array.isArray(parsed) && parsed.length > 0) {
-                      results = parsed;
-                      console.log("[FRONTEND] Results found in parsed step.output:", results.length);
-                    }
-                  } catch (e) {
-                    // Non-JSON string output
+              if (step.data && step.data.results && step.data.results.length > 0) {
+                results = step.data.results;
+                console.log("[FRONTEND] Results found in step.data.results:", results.length);
+              } else if (step.output && Array.isArray(step.output) && step.output.length > 0) {
+                results = step.output;
+                console.log("[FRONTEND] Results found in step.output:", results.length);
+              } else if (step.output && typeof step.output === 'string' && step.output.trim().startsWith('[')) {
+                try {
+                  const parsed = JSON.parse(step.output);
+                  if (Array.isArray(parsed) && parsed.length > 0) {
+                    results = parsed;
+                    console.log("[FRONTEND] Results found in parsed step.output:", results.length);
                   }
+                } catch (e) {
+                  // Non-JSON string output
                 }
               }
+
               if (results) {
                 console.log("[FRONTEND] Calling showFileSearchModal with results:", results);
                 console.log("[FRONTEND] showFileSearchModal type:", typeof showFileSearchModal);
@@ -611,9 +607,10 @@ function handleSSEEvent(event) {
                 console.log("[FRONTEND] No results found in this step");
               }
             }
-          } else {
-            console.log("[FRONTEND] No steps data found");
           }
+        } else {
+          console.log("[FRONTEND] No steps data found");
+        }
 
           // Show completion result row
           appendExecLogRow('Execution Completed ✓', 'success');
@@ -1407,7 +1404,10 @@ function showFileSearchModal(results) {
     `;
     const titleEl = div.querySelector('.doc-item-title');
     if (titleEl) {
-      titleEl.onclick = () => showDocumentOpenConfirmation(num, filename);
+      titleEl.onclick = () => {
+        modal.style.display = 'none';
+        showDocumentOpenConfirmation(num, filename);
+      };
     }
     resultsContainer.appendChild(div);
     console.log(`[MODAL] Added result ${num} to container`);
@@ -1418,13 +1418,9 @@ function showFileSearchModal(results) {
     btn.style.fontSize = '0.85rem';
     btn.textContent = `Open number ${num}`;
     btn.onclick = () => {
-      console.log(`[MODAL] Button ${num} clicked, hiding modal, opening document in browser tab and simulating command`);
+      console.log(`[MODAL] Button ${num} clicked. Hiding search modal and showing confirmation popup.`);
       modal.style.display = 'none';
-      simulateUserCommand(`Open number ${num}`);
-
-      console.log(`[MODAL] Button ${num} clicked. Triggering document open confirmation popup.`);
       showDocumentOpenConfirmation(num, filename);
-
     };
     actionsContainer.appendChild(btn);
     console.log(`[MODAL] Added button ${num} to actions`);
@@ -1448,7 +1444,11 @@ function showFileSearchModal(results) {
   console.log("[MODAL] EXIT showFileSearchModal");
 }
 
+let isOpeningDocument = false;
+
 async function simulateUserCommand(text) {
+  if (isOpeningDocument) return;
+  isOpeningDocument = true;
   try {
     const formData = new FormData();
     formData.append('text', text);
@@ -1456,7 +1456,43 @@ async function simulateUserCommand(text) {
     if (res.ok) await consumeSSEStream(res.body);
   } catch (e) {
     console.error(e);
+  } finally {
+    setTimeout(() => { isOpeningDocument = false; }, 1000);
   }
+}
+
+// Permission Layer Confirmation Popup
+function showDocumentOpenConfirmation(num, filename) {
+  const confirmModal = document.getElementById('doc-confirm-modal');
+  const confirmMessage = document.getElementById('doc-confirm-message');
+  const openBtn = document.getElementById('doc-confirm-open-btn');
+  const cancelBtn = document.getElementById('doc-confirm-cancel-btn');
+
+  if (!confirmModal || !openBtn || !cancelBtn) {
+    console.error("[CONFIRM MODAL] Required elements missing.");
+    simulateUserCommand(`Open number ${num}`);
+    return;
+  }
+
+  if (confirmMessage) {
+    confirmMessage.textContent = `Are you sure you want to open document ${num} (${filename})?`;
+  }
+
+  confirmModal.classList.remove('hidden');
+  confirmModal.style.display = 'flex';
+
+  openBtn.onclick = () => {
+    confirmModal.style.display = 'none';
+    confirmModal.classList.add('hidden');
+    console.log(`[CONFIRM MODAL] User confirmed opening document number ${num}`);
+    simulateUserCommand(`Open number ${num}`);
+  };
+
+  cancelBtn.onclick = () => {
+    confirmModal.style.display = 'none';
+    confirmModal.classList.add('hidden');
+    console.log("[CONFIRM MODAL] User cancelled document opening.");
+  };
 }
 
 // ============================================================================

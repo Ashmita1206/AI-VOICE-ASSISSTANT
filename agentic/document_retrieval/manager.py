@@ -127,7 +127,7 @@ class DocumentRetrievalManager:
             print(f"[DOC LAUNCH AUDIT] Exception in ShellExecuteW: {e}\n{tb}")
             logger.warning("[DOC LAUNCH AUDIT] ShellExecuteW exception: %s", e)
 
-        # Method 3: subprocess cmd /c start "" "path" (fallback if ShellExecuteW failed)
+        # Method 3: subprocess cmd /c start "" "path" (fallback 2)
         try:
             import subprocess
             print(f'[DOC LAUNCH AUDIT] Launching via: subprocess cmd start "" "{norm_path}"')
@@ -142,7 +142,7 @@ class DocumentRetrievalManager:
             print(f"[DOC LAUNCH AUDIT] Exception in cmd start: {e}\n{tb}")
             logger.warning("[DOC LAUNCH AUDIT] cmd start exception: %s", e)
 
-        # Method 4: subprocess explorer.exe "path" (fallback if cmd start failed)
+        # Method 4: subprocess explorer.exe "path" (fallback 3)
         try:
             import subprocess
             print(f'[DOC LAUNCH AUDIT] Launching via: subprocess explorer.exe "{norm_path}"')
